@@ -1,0 +1,12 @@
+<resources>
+    <!-- Investa Brand Book: Blue Ribbon #1955FA, Wild Sand #F5F5F5, Cod Gray #121212 -->
+    <color name="brand">#1955FA</color>
+    <color name="sand">#F5F5F5</color>
+    <color name="ink">#121212</color>
+    <style name="Theme.Investa" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+        <item name="colorPrimaryDark">@color/ink</item>
+        <item name="android:windowBackground">@color/sand</item>
+        <item name="android:statusBarColor">@color/ink</item>
+    </style>
+</resources>

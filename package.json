@@ -1,0 +1,42 @@
+{
+  "name": "investa-mca-pos",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "start:demo": "INVESTA_DEMO=1 next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test lib/*.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:reset": "rm -rf .data"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.11",
+    "@fontsource/inter": "^5.1.0",
+    "@fontsource/space-grotesk": "^5.1.0",
+    "clsx": "2.1.1",
+    "drizzle-orm": "^0.45.4",
+    "lucide-react": "0.453.0",
+    "next": "^14.2.35",
+    "pg": "^8.23.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.11",
+    "@types/pg": "^8.23.1",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.1",
+    "autoprefixer": "10.4.20",
+    "drizzle-kit": "^0.31.11",
+    "postcss": "8.4.47",
+    "tailwindcss": "3.4.14",
+    "tsx": "^4.23.15",
+    "typescript": "5.6.3"
+  }
+}
