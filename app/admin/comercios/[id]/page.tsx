@@ -1,12 +1,12 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Dialogo } from "@/components/Dialogo";
 import { Aviso, Button, Card, CardHead, inputCls, Pill, Row, Td, Th } from "@/components/ui";
-import { ESTADO_ADELANTO, useEstado } from "@/lib/admin-store";
+import { ESTADO_ADELANTO, ESTADO_KYC, useEstado } from "@/lib/admin-store";
 import { api } from "@/lib/api";
 import { bs, fecha, pct, usd } from "@/lib/format";
 import { PESO_LABEL, type Peso } from "@/lib/params";
@@ -21,6 +21,7 @@ export default function Comercio({ params }: { params: { id: string } }) {
   const [bloq, setBloq] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [abierto, setAbierto] = useState<string | null>(null);
+  const [revision, setRevision] = useState<{ aprobar: boolean } | null>(null);
   const cargar = useCallback(() => api<Detalle>(`/admin/comercios/${params.id}`).then(setD).catch((x) => setErr(x.message)), [params.id]);
   useEffect(() => { cargar(); }, [cargar, e]);
 
@@ -29,6 +30,9 @@ export default function Comercio({ params }: { params: { id: string } }) {
   const c = d.comercio, f = c.disglobal, ev = d.evaluaciones[0];
   const cfg = e.parametros.vigente.valores;
   const maxVentas = Math.max(1, ...d.ventas.map((v) => v.usd));
+  const k = d.kyc[0];
+  const kycDeOtro = k && k.representante.cedula.replace(/\D/g, "") !== f.representante.cedula.replace(/\D/g, "");
+  const intentos = d.kyc.filter((x) => x.estado === "rechazado" && x.cuentaIntento).length;
 
   return (
     <>
@@ -47,6 +51,45 @@ export default function Comercio({ params }: { params: { id: string } }) {
       </div>
       {c.estado === "bloqueado" && <div className="mb-4"><Aviso tone="red">Comercio bloqueado: no puede pedir adelantos desde el POS.</Aviso></div>}
       {c.correcciones && <div className="mb-4"><Aviso>El comercio pidió corregir datos al confirmar: {Object.entries(c.correcciones).map(([k, v]) => `${k}: ${v}`).join(" · ")}</Aviso></div>}
+
+      <Card className="mb-6">
+        <CardHead title="KYC del representante legal"
+          sub={k ? <>Intento {d.kyc.length} · {k.proveedor === "didit" ? "Didit" : "simulado (demo)"} · {new Date(k.creado).toLocaleString("es-VE", { dateStyle: "short", timeStyle: "short" })}{k.decididoPor ? ` · decidió ${k.decididoPor}` : ""}</> : "El comercio todavía no inicia la verificación"}
+          action={k && <Pill tone={ESTADO_KYC[kycDeOtro ? "sin" : k.estado].tone}>{kycDeOtro ? "Cambió el representante" : ESTADO_KYC[k.estado].t}</Pill>} />
+        <div className="grid gap-6 p-5 md:grid-cols-2">
+          <div className="space-y-1 text-sm">
+            <Row k="Representante en Disglobal" v={`${f.representante.nombre} · ${f.representante.cedula}`} wrap />
+            {k?.resultado && <>
+              <Row k="Documento verificado" v={`${k.resultado.nombre ?? "—"} · ${k.resultado.documento ?? "—"}`} wrap />
+              <Row k="Coincidencia selfie / cédula" v={k.resultado.coincidenciaRostro == null ? "—" : `${Math.round(k.resultado.coincidenciaRostro)}%`} />
+              <Row k="Vence" v={k.resultado.vencimiento ? fecha(k.resultado.vencimiento) : "—"} />
+            </>}
+            {k?.motivo && <p className="pt-2 text-neutral-600">{k.motivo}</p>}
+            {kycDeOtro && <Aviso>El KYC se hizo con {k.representante.nombre} ({k.representante.cedula}), pero hoy Disglobal tiene otro representante: el comercio debe verificarse de nuevo.</Aviso>}
+          </div>
+          <div>
+            {k?.checks ? (
+              <ul className="divide-y divide-black/5">
+                {k.checks.map((x) => (
+                  <li key={x.id} className="flex gap-2.5 py-2 text-sm">
+                    {x.estado === "ok" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> : x.estado === "warn" ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-coral" />}
+                    <div className="min-w-0"><p className="font-medium">{x.label}</p><p className="break-words text-xs text-neutral-500">{x.detalle}</p></div>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-sm text-neutral-500">{k ? "Esperando el resultado del proveedor." : "Sin intentos."}</p>}
+            {e.usuario.permisos.decidir && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {k?.estado === "en_revision" && !kycDeOtro && <>
+                  <Button onClick={() => { setMotivo(""); setRevision({ aprobar: true }); }} disabled={k.checks?.some((x) => x.id === "cedula" && x.estado === "fail")}>Aprobar KYC</Button>
+                  <Button variant="danger" onClick={() => { setMotivo(""); setRevision({ aprobar: false }); }}>Rechazar</Button>
+                </>}
+                {intentos >= cfg.kyc.intentosMax && k?.estado === "rechazado" && <Button variant="secondary" onClick={() => accion("kyc-habilitar", { id: c.id })}>Habilitar otro intento</Button>}
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -155,6 +198,13 @@ export default function Comercio({ params }: { params: { id: string } }) {
         </table>
       </Card>
 
+      {revision && k && (
+        <Dialogo titulo={revision.aprobar ? "Aprobar KYC" : "Rechazar KYC"} okTxt={revision.aprobar ? "Aprobar" : "Rechazar"} okVariant={revision.aprobar ? "primary" : "danger"} okDisabled={motivo.trim().length < 5}
+          onClose={() => setRevision(null)} onOk={() => accion("kyc-revisar", { id: k.id, aprobar: revision.aprobar, motivo })}>
+          <p className="text-neutral-500">{revision.aprobar ? "Confirma que la persona verificada es el representante legal (p. ej. revisaste las fotos en el panel de Didit)." : "El comercio verá el motivo en su POS."}</p>
+          <textarea className={inputCls} rows={3} value={motivo} onChange={(x) => setMotivo(x.target.value)} placeholder="Motivo" />
+        </Dialogo>
+      )}
       {bloq && (
         <Dialogo titulo={`Bloquear ${c.nombreComercial}`} okTxt="Bloquear" okVariant="danger" okDisabled={motivo.trim().length < 5} onClose={() => setBloq(false)} onOk={() => accion("bloquear", { id: c.id, bloqueado: true, motivo })}>
           <p className="text-neutral-500">No podrá pedir adelantos nuevos. Lo que ya debe se sigue cobrando.</p>

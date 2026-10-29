@@ -8,6 +8,7 @@ import { DEMO_COMERCIOS, disglobal } from "./disglobal";
 import { DEMO } from "./http";
 import { desembolsar, evaluarComercio } from "./mca";
 import { cotizar } from "@/lib/mca";
+import { sembrarKycAprobado } from "./kyc";
 import { registrar } from "./repo";
 import { sembrarTasas } from "./tasas";
 
@@ -45,6 +46,8 @@ export async function sembrarSiVacia(db: DB) {
     await db.insert(schema.comercios).values({ id, rif: f.rif, razonSocial: f.razonSocial, nombreComercial: f.nombreComercial, telefono: f.telefono, email: f.email, disglobal: f, confirmadoEn: addDays(new Date(), -50) });
     await db.insert(schema.terminales).values({ serial: d.serial, comercioId: id, modelo: d.modelo, verificada: true });
     await registrar(db, f.nombreComercial, "Onboarding desde POS", `RIF ${f.rif} desde ${d.modelo} ${d.serial} (demo)`, id);
+    const [c] = await db.select().from(schema.comercios).where(eq(schema.comercios.id, id));
+    await sembrarKycAprobado(db, c);
   }
 
   // Panadería: adelanto desembolsado hace 40 días, cobrándose con la retención diaria.

@@ -10,6 +10,7 @@ import { schema, type DB } from "./db";
 import { disglobal } from "./disglobal";
 import { conflicto, DEMO, invalido, noEncontrado, prohibido } from "./http";
 import { params, paramsVigente, registrar, tasaDelDia, tasas } from "./repo";
+import { estadoKyc, kycAprobado } from "./kyc";
 import { asegurarTasaDeHoy, BCV_REFERENCIA } from "./tasas";
 
 type Comercio = typeof schema.comercios.$inferSelect;
@@ -118,6 +119,7 @@ export async function estadoPos(db: DB, c: Comercio) {
   return {
     comercio: { rif: c.rif, nombre: c.nombreComercial, razonSocial: c.razonSocial, telefono: c.telefono, email: c.email, banco: c.disglobal.cuentaLiquidacion.banco, cuenta: enmascarar(c.disglobal.cuentaLiquidacion.numero) },
     tasaHoy: t?.tasa ?? null,
+    kyc: await estadoKyc(db, c),
     oferta: {
       montoMaxUsd: ev.montoMaxUsd,
       score: ev.score,
@@ -139,6 +141,7 @@ export async function estadoPos(db: DB, c: Comercio) {
 export const zSolicitud = z.object({ montoUsd: z.number().positive(), plazoDias: z.number().int().positive(), acepto: z.literal(true) });
 
 export async function solicitar(db: DB, c: Comercio, serial: string | null, x: z.infer<typeof zSolicitud>) {
+  if (!(await kycAprobado(db, c))) throw prohibido("Antes de pedir el adelanto, el representante legal tiene que verificar su identidad.");
   const [abierto] = await db.select({ id: schema.adelantos.id }).from(schema.adelantos).where(and(eq(schema.adelantos.comercioId, c.id), inArray(schema.adelantos.estado, [...ACTIVOS])));
   if (abierto) throw conflicto("Ya tienes un adelanto en curso. Podrás pedir otro cuando lo termines de pagar.");
   const ev = await evaluacionVigente(db, c);

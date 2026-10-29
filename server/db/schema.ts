@@ -1,5 +1,6 @@
 import { boolean, date, doublePrecision, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import type { Config } from "@/lib/params";
+import type { CheckKyc, Representante, ResultadoKyc } from "@/lib/kyc";
 import type { Evaluacion } from "@/lib/scoring";
 import type { ComercioDisglobal } from "../disglobal";
 
@@ -46,6 +47,27 @@ export const terminales = pgTable("terminales", {
   verificada: boolean("verificada").notNull(), // el serial figura en Disglobal para ese RIF
   ultimoUso: timestamp("ultimo_uso", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Verificación de identidad del representante legal (KYC), una fila por intento.
+ * La cédula esperada es la del representante en Disglobal al momento del intento: si Disglobal la cambia, se pide un KYC nuevo.
+ */
+export const kyc = pgTable("kyc", {
+  id: text("id").primaryKey(),
+  comercioId: text("comercio_id").notNull(),
+  proveedor: text("proveedor", { enum: ["didit", "simulado"] }).notNull(),
+  sesionProveedor: text("sesion_proveedor"), // session_id de Didit
+  urlProveedor: text("url_proveedor"), // donde la persona hace la verificación
+  estado: text("estado", { enum: ["pendiente", "aprobado", "en_revision", "rechazado"] }).notNull(),
+  representante: jsonb("representante").$type<Representante>().notNull(),
+  resultado: jsonb("resultado").$type<ResultadoKyc>(),
+  checks: jsonb("checks").$type<CheckKyc[]>(),
+  motivo: text("motivo"),
+  decididoPor: text("decidido_por"), // "Motor" o el usuario del backoffice que revisó
+  cuentaIntento: boolean("cuenta_intento").notNull().default(true), // false cuando el backoffice habilita otro intento
+  creado: timestamp("creado", { withTimezone: true }).notNull().defaultNow(),
+  decidido: timestamp("decidido", { withTimezone: true }),
+}, (t) => ({ porComercio: index("kyc_comercio").on(t.comercioId), porSesion: uniqueIndex("kyc_sesion").on(t.sesionProveedor) }));
 
 /** Cada scoring que se corrió, con la versión de parámetros usada. */
 export const evaluaciones = pgTable("evaluaciones", {

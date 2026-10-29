@@ -3,6 +3,7 @@
 Contenedor WebView de la app `/pos` del servidor. Lo instala Disglobal en sus terminales Android (N62, N80, N82, N86, N92, AF910).
 
 - `MainActivity.kt`: abre `{BASE_URL}/pos?serial=…`, solo navega dentro de ese origen, guarda la cookie de sesión y muestra un aviso sin conexión.
+- KYC: el WebView puede navegar a `verification.didit.me` y solo le concede la cámara a ese origen, después de que el usuario acepte el permiso de Android.
 - `PuentePos.kt`: expone `window.InvestaPOS.serial()` y `modelo()` a la página.
 
 ## Compilar

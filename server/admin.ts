@@ -6,6 +6,7 @@ import type { Admin } from "./auth";
 import { schema, type DB } from "./db";
 import { disglobalSimulado } from "./disglobal";
 import { DEMO, noEncontrado } from "./http";
+import { kycDeComercio } from "./kyc";
 import { ventasMensuales } from "./mca";
 import { paramsVigente, tasaDelDia } from "./repo";
 import { versiones } from "./parametros";
@@ -26,6 +27,9 @@ export async function estadoAdmin(db: DB, u: Admin) {
   for (const p of pagos) if ((ultimoPago.get(p.adelantoId) ?? "") < p.fecha) ultimoPago.set(p.adelantoId, p.fecha);
   const desembolsados = adelantos.filter((a) => a.desembolsadoEn);
   const tasa = await tasaDelDia(db);
+  const kycs = await db.select({ comercioId: schema.kyc.comercioId, estado: schema.kyc.estado, creado: schema.kyc.creado }).from(schema.kyc).orderBy(desc(schema.kyc.creado));
+  const kycDe = new Map<string, (typeof kycs)[number]["estado"]>();
+  for (const k of kycs) if (!kycDe.has(k.comercioId)) kycDe.set(k.comercioId, k.estado);
 
   return {
     usuario: { ...u, permisos: { decidir: puede(u.roles, "decidir"), moverDinero: puede(u.roles, "mover_dinero"), tasas: puede(u.roles, "tasas"), parametros: puede(u.roles, "parametros"), comercios: puede(u.roles, "comercios") } },
@@ -41,10 +45,11 @@ export async function estadoAdmin(db: DB, u: Admin) {
       cobradoUsd: r2(desembolsados.reduce((a, x) => a + (x.totalUsd - x.saldoUsd), 0)),
       porAprobar: adelantos.filter((a) => a.estado === "en_revision").length,
       porDesembolsar: adelantos.filter((a) => a.estado === "aprobado").length,
+      kycPorRevisar: [...kycDe.values()].filter((x) => x === "en_revision").length,
     },
     comercios: comercios.map((c) => ({
       id: c.id, rif: c.rif, nombre: c.nombreComercial, razonSocial: c.razonSocial, ciudad: c.disglobal.ciudad, estado: c.estado, estatusDisglobal: c.disglobal.estatus,
-      terminales: c.disglobal.terminales.length, confirmadoEn: c.confirmadoEn, correcciones: c.correcciones,
+      terminales: c.disglobal.terminales.length, kyc: kycDe.get(c.id) ?? null, confirmadoEn: c.confirmadoEn, correcciones: c.correcciones,
       score: ultima.get(c.id)?.score ?? null, montoMaxUsd: ultima.get(c.id)?.montoMaxUsd ?? null, evaluadoEn: ultima.get(c.id)?.fecha ?? null,
     })),
     adelantos: adelantos.map((a) => ({ ...a, comercio: nombre.get(a.comercioId) ?? "", score: scoreDe.get(a.evaluacionId) ?? null, ultimoPago: ultimoPago.get(a.id) ?? null })),
@@ -62,5 +67,5 @@ export async function detalleComercio(db: DB, id: string) {
   const terminales = await db.select().from(schema.terminales).where(eq(schema.terminales.comercioId, id));
   let ventas: Awaited<ReturnType<typeof ventasMensuales>> = [];
   try { ventas = await ventasMensuales(db, c); } catch { /* Disglobal no disponible: el detalle se muestra sin el gráfico */ }
-  return { comercio: c, evaluaciones, adelantos: adelantos.map((a) => ({ ...a, pagos: pagos.filter((p) => p.adelantoId === a.id) })), terminales, ventas };
+  return { comercio: c, kyc: await kycDeComercio(db, id), evaluaciones, adelantos: adelantos.map((a) => ({ ...a, pagos: pagos.filter((p) => p.adelantoId === a.id) })), terminales, ventas };
 }

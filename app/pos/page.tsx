@@ -33,7 +33,13 @@ export default function Pos() {
   const [serial, setSerial] = useState("");
 
   const recargar = useCallback(async () => {
-    try { setEstado(await api<Estado>("/pos/estado")); }
+    try {
+      // De vuelta del flujo de Didit: se lee la decisión por si el webhook todavía no llegó.
+      if (new URLSearchParams(location.search).get("kyc") === "listo") {
+        history.replaceState(null, "", location.pathname);
+        setEstado(await api<Estado>("/pos/kyc-consultar", {}));
+      } else setEstado(await api<Estado>("/pos/estado"));
+    }
     catch (e) { if (e instanceof ApiFallo && e.status === 401) setEstado(null); else throw e; }
     finally { setCargando(false); }
   }, []);
@@ -44,7 +50,9 @@ export default function Pos() {
 
   let cuerpo: ReactNode;
   if (cargando) cuerpo = <Cargando texto="Cargando…" />;
-  else if (estado) cuerpo = estado.activo ? <Activo e={estado} /> : <Oferta e={estado} onListo={setEstado} />;
+  else if (estado) cuerpo = estado.activo ? <Activo e={estado} />
+    : estado.oferta.montoMaxUsd && estado.kyc.estado !== "aprobado" ? <Kyc e={estado} onListo={setEstado} />
+      : <Oferta e={estado} onListo={setEstado} />;
   else if (consulta) cuerpo = <Confirmar c={consulta} rif={rif} serial={serial} onVolver={() => setConsulta(null)} onListo={recargar} />;
   else cuerpo = <PasoRif rif={rif} setRif={setRif} serial={serial} setSerial={setSerial} onEncontrado={setConsulta} />;
 
@@ -226,7 +234,98 @@ function Confirmar({ c, rif, serial, onVolver, onListo }: { c: Consulta; rif: st
   );
 }
 
-/* ---------- 3. Oferta ---------- */
+/* ---------- 3. KYC del representante legal ---------- */
+
+function Kyc({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
+  const k = e.kyc;
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<void>) => { setErr(""); setBusy(true); try { await fn(); } catch (x) { setErr((x as Error).message); } finally { setBusy(false); } };
+  const iniciar = () => run(async () => {
+    const r = await api<{ url: string | null; estado: Estado }>("/pos/kyc-iniciar", {});
+    if (r.url) location.href = r.url; // flujo de Didit: cédula, selfie y prueba de vida
+    else onListo(r.estado);
+  });
+  const simular = (escenario: string) => run(async () => onListo(await api<Estado>("/pos/kyc-simular", { escenario })));
+
+  const quien = (
+    <Tarjeta titulo="Quién debe hacerlo">
+      <p className="font-semibold">{k.representante.nombre}</p>
+      <p className="text-sm text-neutral-500">C.I. {k.representante.cedula} · representante legal registrado en Disglobal</p>
+    </Tarjeta>
+  );
+
+  if (k.estado === "en_revision") return (
+    <div className="flex flex-1 flex-col gap-4">
+      <div className="mx-auto mt-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-card"><Clock className="h-8 w-8 text-amber-500" /></div>
+      <h1 className="text-center font-display text-2xl">Estamos revisando tu verificación</h1>
+      <p className="text-center text-sm text-neutral-500">Un analista de Investa la revisa a mano. Te avisamos por {e.comercio.telefono}; suele tomar menos de un día hábil.</p>
+      {quien}
+    </div>
+  );
+
+  if (k.estado === "pendiente" && k.simulado) return (
+    <div className="flex flex-1 flex-col gap-4">
+      <h1 className="font-display text-2xl">Verificación de identidad</h1>
+      <div className="flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-3xl bg-ink text-white/70">
+        <ShieldCheck className="h-12 w-12" />
+        <p className="px-8 text-center text-sm">Aquí se abre el flujo de Didit: foto de la cédula por ambos lados, selfie y prueba de vida.</p>
+      </div>
+      <div className="rounded-2xl border border-dashed border-violet-300 bg-violet-50/60 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-violet-700">Demo · ¿quién se verificó?</p>
+        <div className="grid gap-1.5">
+          <button disabled={busy} onClick={() => simular("representante")} className="rounded-xl bg-white px-3 py-2.5 text-left text-sm ring-1 ring-violet-200">El representante legal</button>
+          <button disabled={busy} onClick={() => simular("dudoso")} className="rounded-xl bg-white px-3 py-2.5 text-left text-sm ring-1 ring-violet-200">El representante, con selfie poco clara</button>
+          <button disabled={busy} onClick={() => simular("otra_persona")} className="rounded-xl bg-white px-3 py-2.5 text-left text-sm ring-1 ring-violet-200">Otra persona (un empleado)</button>
+        </div>
+      </div>
+      <Fallo msg={err} />
+    </div>
+  );
+
+  const sinIntentos = k.estado === "rechazado" && k.intentosRestantes === 0;
+  return (
+    <div className="flex flex-1 flex-col gap-4">
+      {e.oferta.montoMaxUsd > 0 && (
+        <div className="rounded-3xl bg-brand p-5 text-white">
+          <p className="text-sm text-white/80">Tienes disponible hasta</p>
+          <p className="font-display text-3xl">{usd(e.oferta.montoMaxUsd)}</p>
+          <p className="mt-1 text-xs text-white/70">Solo falta verificar la identidad del representante legal.</p>
+        </div>
+      )}
+      <div>
+        <h1 className="font-display text-2xl">Verifica tu identidad</h1>
+        <p className="mt-1 text-sm text-neutral-500">Por seguridad, el adelanto solo lo puede pedir el representante legal del comercio.</p>
+      </div>
+      {quien}
+      {k.estado === "rechazado" && (
+        <p className="rounded-xl bg-coral-100 px-4 py-3 text-sm text-coral">
+          {k.motivo ?? "No pudimos verificar la identidad."} {sinIntentos ? "Ya no quedan intentos: comunícate con Investa." : `Te ${k.intentosRestantes === 1 ? "queda 1 intento" : `quedan ${k.intentosRestantes} intentos`}.`}
+        </p>
+      )}
+      {!sinIntentos && (
+        <Tarjeta titulo="Ten a mano">
+          <ul className="space-y-1.5 text-sm text-neutral-600">
+            <li>• La cédula de identidad del representante, vigente</li>
+            <li>• Buena luz y la cara descubierta (sin lentes oscuros ni gorra)</li>
+            <li>• Unos 2 minutos</li>
+          </ul>
+        </Tarjeta>
+      )}
+      <Fallo msg={err} />
+      {!sinIntentos && (
+        <div className="mt-auto">
+          <Boton onClick={k.estado === "pendiente" && k.url ? () => { location.href = k.url!; } : iniciar} cargando={busy}>
+            {k.estado === "pendiente" ? "Continuar verificación" : k.estado === "rechazado" ? "Intentar de nuevo" : "Comenzar verificación"}
+          </Boton>
+          <p className="mt-3 text-center text-xs text-neutral-400">La verificación la hace Didit; Investa recibe el resultado y los datos de la cédula.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- 4. Oferta ---------- */
 
 function Oferta({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
   const o = e.oferta;
@@ -311,7 +410,7 @@ function Oferta({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
   );
 }
 
-/* ---------- 4. Adelanto en curso ---------- */
+/* ---------- 5. Adelanto en curso ---------- */
 
 const ESTADO_TXT: Record<string, { t: string; c: string }> = {
   en_revision: { t: "En revisión", c: "bg-amber-50 text-amber-700" },

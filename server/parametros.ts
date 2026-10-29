@@ -23,6 +23,7 @@ const zConfig = z.object({
     pesos: z.object({ volumen: n, estabilidad: n, tendencia: n, actividad: n, antiguedad: n, rechazos: n }),
   }),
   aprobacion: z.object({ automaticaHastaUsd: n, scoreAutoMin: n, vigenciaOfertaDias: n }),
+  kyc: z.object({ coincidenciaRostroMin: n, intentosMax: n }),
 }) satisfies z.ZodType<Config>;
 
 export const zPropuesta = z.object({ valores: zConfig, nota: z.string().min(5).max(500), vigenteDesde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });

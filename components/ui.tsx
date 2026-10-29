@@ -54,7 +54,7 @@ export function Row({ k, v, strong, muted, wrap }: { k: ReactNode; v: ReactNode;
   return (
     <div className={clsx("flex items-baseline justify-between gap-4 py-2 text-sm", muted && "text-neutral-500")}>
       <span className="shrink-0">{k}</span>
-      <span className={clsx("text-right tabular-nums", wrap ? "min-w-0 break-all" : "shrink-0 whitespace-nowrap", strong ? "font-display text-base font-medium text-ink" : "font-medium")}>{v}</span>
+      <span className={clsx("text-right tabular-nums", wrap ? "min-w-0 [overflow-wrap:anywhere]" : "shrink-0 whitespace-nowrap", strong ? "font-display text-base font-medium text-ink" : "font-medium")}>{v}</span>
     </div>
   );
 }

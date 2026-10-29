@@ -68,3 +68,11 @@ export const ESTADO_ADELANTO: Record<string, { t: string; tone: "neutral" | "gre
   rechazado: { t: "Rechazado", tone: "neutral" },
   cancelado: { t: "Cancelado", tone: "neutral" },
 };
+
+export const ESTADO_KYC = {
+  aprobado: { t: "Verificado", tone: "green" },
+  en_revision: { t: "Por revisar", tone: "amber" },
+  rechazado: { t: "Rechazado", tone: "red" },
+  pendiente: { t: "En curso", tone: "blue" },
+  sin: { t: "Sin KYC", tone: "neutral" },
+} as const;

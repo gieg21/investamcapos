@@ -159,6 +159,11 @@ export default function Parametros() {
           <Num label="Vigencia de la oferta" suf="días" value={c.aprobacion.vigenciaOfertaDias} onChange={(n) => set((x) => { x.aprobacion.vigenciaOfertaDias = n; })} disabled={!editable} />
         </Seccion>
 
+        <Seccion titulo="KYC del representante legal" sub="La cédula verificada debe ser la del representante que Disglobal tiene para el RIF">
+          <Num label="Coincidencia selfie / cédula" pct={false} suf="%" value={c.kyc.coincidenciaRostroMin} onChange={(n) => set((x) => { x.kyc.coincidenciaRostroMin = n; })} disabled={!editable} hint="Por debajo, el KYC pasa a revisión manual" />
+          <Num label="Intentos rechazados permitidos" suf="intentos" value={c.kyc.intentosMax} onChange={(n) => set((x) => { x.kyc.intentosMax = n; })} disabled={!editable} hint="Después, solo el backoffice puede habilitar otro" />
+        </Seccion>
+
         <Card>
           <CardHead title="Ejemplo: oferta máxima con estos parámetros" sub="Según ventas mensuales en USD y score del comercio" />
           <div className="overflow-x-auto p-5">

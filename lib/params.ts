@@ -48,6 +48,10 @@ export type Config = {
     scoreAutoMin: number; // …si además el score es al menos este
     vigenciaOfertaDias: number; // la evaluación vale estos días; después se recalcula
   };
+  kyc: {
+    coincidenciaRostroMin: number; // % mínimo selfie vs. foto de la cédula para aprobar sin revisión
+    intentosMax: number; // verificaciones rechazadas antes de exigir revisión del backoffice
+  };
 };
 
 export const CONFIG_DEFAULT: Config = {
@@ -85,6 +89,10 @@ export const CONFIG_DEFAULT: Config = {
     scoreAutoMin: 80,
     vigenciaOfertaDias: 7,
   },
+  kyc: {
+    coincidenciaRostroMin: 70,
+    intentosMax: 3,
+  },
 };
 
 /** Validación de coherencia: la usa el servidor antes de aceptar una propuesta. Devuelve la lista de errores. */
@@ -116,5 +124,7 @@ export function validar(c: Config): string[] {
   if (Object.values(s.pesos).some((w) => w < 0)) e.push("Ningún peso puede ser negativo.");
   if (!(a.automaticaHastaUsd >= 0)) e.push("El tope de aprobación automática no puede ser negativo.");
   if (!(a.vigenciaOfertaDias >= 1)) e.push("La oferta debe tener al menos 1 día de vigencia.");
+  if (!(c.kyc.coincidenciaRostroMin >= 0 && c.kyc.coincidenciaRostroMin <= 100)) e.push("La coincidencia de rostro va de 0 a 100%.");
+  if (!(Number.isInteger(c.kyc.intentosMax) && c.kyc.intentosMax >= 1)) e.push("Los intentos de KYC son un entero ≥ 1.");
   return e;
 }

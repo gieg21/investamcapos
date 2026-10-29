@@ -2,6 +2,7 @@ import { cerrarSesion, frenarFuerzaBruta, registrarFallo, requierePos } from "@/
 import { getDb } from "@/server/db";
 import { DEMO_COMERCIOS } from "@/server/disglobal";
 import { ApiError, cuerpo, DEMO, enSerie, noEncontrado, ok, ruta } from "@/server/http";
+import { completarSimulado, consultarKyc, iniciarKyc, zSimulado } from "@/server/kyc";
 import { confirmarOnboarding, consultarRif, estadoPos, solicitar, zConfirmar, zConsulta, zSolicitud } from "@/server/mca";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,10 @@ export const dynamic = "force-dynamic";
  *   POST /api/pos/consulta   { rif, serial }            → ficha de Disglobal para autocompletar
  *   POST /api/pos/confirmar  { rif, serial, telefono, email, nota?, acepto } → abre sesión del POS y corre el scoring
  *   GET  /api/pos/estado                                 → oferta, adelanto en curso y pagos
- *   POST /api/pos/solicitar  { montoUsd, plazoDias, acepto }
+ *   POST /api/pos/kyc-iniciar                           → URL del flujo de Didit (o intento simulado en demo)
+ *   POST /api/pos/kyc-consultar                         → al volver de Didit, lee la decisión si el webhook no llegó
+ *   POST /api/pos/kyc-simular { escenario }             → solo demo
+ *   POST /api/pos/solicitar  { montoUsd, plazoDias, acepto } (exige KYC aprobado)
  *   POST /api/pos/salir
  */
 export const GET = ruta(async (_req: Request, { params }: { params: { accion: string } }) => {
@@ -41,6 +45,22 @@ export const POST = ruta(async (req: Request, { params }: { params: { accion: st
       const { comercio, serial } = await requierePos();
       const x = await cuerpo(req, zSolicitud);
       await enSerie(() => solicitar(db, comercio, serial, x));
+      return ok(await estadoPos(db, comercio));
+    }
+    case "kyc-iniciar": {
+      const { comercio } = await requierePos();
+      const r = await enSerie(() => iniciarKyc(db, comercio, new URL(req.url).origin));
+      return ok({ ...r, estado: await estadoPos(db, comercio) });
+    }
+    case "kyc-consultar": {
+      const { comercio } = await requierePos();
+      await enSerie(() => consultarKyc(db, comercio));
+      return ok(await estadoPos(db, comercio));
+    }
+    case "kyc-simular": {
+      const { comercio } = await requierePos();
+      const x = await cuerpo(req, zSimulado);
+      await enSerie(() => completarSimulado(db, comercio, x.escenario));
       return ok(await estadoPos(db, comercio));
     }
     case "salir": await cerrarSesion("pos"); return ok();

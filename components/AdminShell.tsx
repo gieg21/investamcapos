@@ -12,7 +12,7 @@ import { ROL_LABEL } from "@/lib/permisos";
 const NAV = [
   { href: "/admin", label: "Panel", icon: Gauge },
   { href: "/admin/adelantos", label: "Adelantos", icon: Coins, badge: "a" as const },
-  { href: "/admin/comercios", label: "Comercios", icon: Store },
+  { href: "/admin/comercios", label: "Comercios", icon: Store, badge: "k" as const },
   { href: "/admin/tasas-bcv", label: "Tasas BCV", icon: TrendingUp },
   { href: "/admin/parametros", label: "Parámetros", icon: SlidersHorizontal, badge: "p" as const },
   { href: "/admin/bitacora", label: "Bitácora", icon: History },
@@ -30,7 +30,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (!ready || !e) return <div className="min-h-screen bg-sand" />;
 
   const pend = e.parametros.versiones.find((v) => v.estado === "pendiente");
-  const badges = { a: e.kpis.porAprobar + e.kpis.porDesembolsar, p: pend && pend.propuestoPorId !== e.usuario.id && e.usuario.permisos.parametros ? 1 : 0 };
+  const badges = { a: e.kpis.porAprobar + e.kpis.porDesembolsar, k: e.kpis.kycPorRevisar, p: pend && pend.propuestoPorId !== e.usuario.id && e.usuario.permisos.parametros ? 1 : 0 };
 
   return (
     <div className="min-h-screen lg:pl-64">
