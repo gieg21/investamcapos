@@ -5,10 +5,12 @@ import { CONFIG_DEFAULT } from "@/lib/params";
 import { hashPassword, nuevoId } from "./auth";
 import { schema, type DB } from "./db";
 import { DEMO_COMERCIOS, disglobal } from "./disglobal";
+import { rifCon } from "@/lib/rif";
 import { DEMO } from "./http";
 import { desembolsar, evaluarComercio } from "./mca";
 import { cotizar } from "@/lib/mca";
 import { sembrarKycAprobado } from "./kyc";
+import { sembrarSeguimiento } from "./seguimiento";
 import { registrar } from "./repo";
 import { sembrarTasas } from "./tasas";
 
@@ -46,6 +48,7 @@ export async function sembrarSiVacia(db: DB) {
     await db.insert(schema.comercios).values({ id, rif: f.rif, razonSocial: f.razonSocial, nombreComercial: f.nombreComercial, telefono: f.telefono, email: f.email, disglobal: f, confirmadoEn: addDays(new Date(), -50) });
     await db.insert(schema.terminales).values({ serial: d.serial, comercioId: id, modelo: d.modelo, verificada: true });
     await registrar(db, f.nombreComercial, "Onboarding desde POS", `RIF ${f.rif} desde ${d.modelo} ${d.serial} (demo)`, id);
+    await db.insert(schema.prospectos).values({ rif: f.rif, nombre: f.nombreComercial, actividad: f.actividad, ciudad: f.ciudad, estado: f.estado, serial: d.serial, comercioId: id, primera: addDays(new Date(), -52) });
     const [c] = await db.select().from(schema.comercios).where(eq(schema.comercios.id, id));
     await sembrarKycAprobado(db, c);
   }
@@ -72,5 +75,12 @@ export async function sembrarSiVacia(db: DB) {
   await crear(DEMO_COMERCIOS[0].rif, 4000, 90, 40, "aprobado");
   await crear(DEMO_COMERCIOS[1].rif, 1500, 60, 75, "aprobado");
   await crear(DEMO_COMERCIOS[1].rif, 2000, 60, null, "en_revision");
+  // Seguimiento: uso de la app de los comercios sembrados y RIF de la base simulada que solo consultaron.
+  const soloConsultas = [];
+  for (const n of ["30222333", "31444555", "32666777", "33888999", "34111222", "35333444", "36555666", "37777888"]) {
+    const f = await disglobal.comercio(rifCon("J", n));
+    if (f) soloConsultas.push({ rif: f.rif, nombre: f.nombreComercial, actividad: f.actividad, ciudad: f.ciudad, estado: f.estado });
+  }
+  await sembrarSeguimiento(db, [{ id: ids[DEMO_COMERCIOS[0].rif], diasPorSemana: 4 }, { id: ids[DEMO_COMERCIOS[1].rif], diasPorSemana: 1.5 }, { id: ids[DEMO_COMERCIOS[2].rif], diasPorSemana: 0.3 }], soloConsultas);
   // El cierre diario que corre al conectar cobra los días transcurridos: el de la Farmacia (75 días, plazo 60) queda pagado.
 }

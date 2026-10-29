@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { isoDay } from "@/lib/format";
@@ -7,13 +7,16 @@ import { evaluarKyc, soloDigitos, type ResultadoKyc } from "@/lib/kyc";
 import { exigir, nuevoId, type Admin } from "./auth";
 import { schema, type DB } from "./db";
 import { ApiError, conflicto, DEMO, invalido, noEncontrado, prohibido } from "./http";
+import { analizarKyc, enSegundoPlano } from "./agentes";
 import { paramsVigente, registrar } from "./repo";
 
 /**
  * KYC del representante legal con Didit (el mismo proveedor que el portal de factoring).
  *
  * 1. El POS pide una sesión (`iniciarKyc`); Didit devuelve la URL de su flujo: foto de la cédula, selfie y prueba de vida.
- * 2. Al terminar, Didit redirige a /pos?kyc=listo y avisa por webhook (`webhookDidit`, firmado con HMAC).
+ *    La misma URL se abre en el POS o se muestra como QR para hacerlo desde el teléfono (mejor cámara, o POS sin cámara).
+ * 2. Al terminar, Didit redirige a /kyc/listo (que devuelve al POS o, en el teléfono, pide volver al POS)
+ *    y avisa por webhook (`webhookDidit`, firmado con HMAC). Mientras tanto el POS consulta la decisión.
  * 3. Se lee la decisión de Didit y se compara con el representante que Disglobal tiene para el RIF (lib/kyc.ts).
  *
  * TODO(Didit): confirmar con la documentación vigente de Didit los nombres exactos de los campos de la
@@ -88,7 +91,7 @@ export async function estadoKyc(db: DB, c: Comercio) {
     representante: { nombre: rep.nombre, cedula: enmascararCedula(rep.cedula) },
     intentosRestantes: Math.max(0, cfg.kyc.intentosMax - usados),
     simulado: kycSimulado(),
-    // Si quedó una sesión de Didit abierta (cerraron la app a mitad), se retoma la misma.
+    // Intento abierto: la URL del flujo (para abrirla aquí o mostrarla como QR para el teléfono).
     url: vigente && k!.estado === "pendiente" ? k!.urlProveedor : null,
   };
 }
@@ -110,7 +113,7 @@ export async function iniciarKyc(db: DB, c: Comercio, origen: string) {
   if (diditConfigurado()) {
     const s = await didit("/v2/session/", {
       method: "POST",
-      body: JSON.stringify({ workflow_id: process.env.DIDIT_WORKFLOW_ID, vendor_data: id, callback: `${process.env.INVESTA_PUBLIC_URL || origen}/pos?kyc=listo` }),
+      body: JSON.stringify({ workflow_id: process.env.DIDIT_WORKFLOW_ID, vendor_data: id, callback: `${process.env.INVESTA_PUBLIC_URL || origen}/kyc/listo` }),
     });
     const sesion = String(s.session_id ?? ""), url = String(s.url ?? "");
     if (!sesion || !url) throw new ApiError(502, "El servicio de verificación no devolvió una sesión. Intenta de nuevo.");
@@ -119,9 +122,12 @@ export async function iniciarKyc(db: DB, c: Comercio, origen: string) {
     return { id, url };
   }
   if (!DEMO) throw new ApiError(503, "La verificación de identidad no está disponible en este momento.");
-  await db.insert(schema.kyc).values({ id, comercioId: c.id, proveedor: "simulado", estado: "pendiente", representante });
+  // Demo: el "flujo" es una página nuestra que se abre en el teléfono con un token de un solo uso.
+  const token = randomBytes(18).toString("base64url");
+  const url = `${process.env.INVESTA_PUBLIC_URL || origen}/kyc/simulado?t=${token}`;
+  await db.insert(schema.kyc).values({ id, comercioId: c.id, proveedor: "simulado", sesionProveedor: `sim_${token}`, urlProveedor: url, estado: "pendiente", representante });
   await registrar(db, c.nombreComercial, "KYC iniciado", `Simulado (demo) · representante ${representante.nombre}`, c.id);
-  return { id, url: null };
+  return { id, url };
 }
 
 /** Aplica el resultado del proveedor: decide con las reglas de lib/kyc.ts y deja constancia. */
@@ -134,6 +140,7 @@ async function aplicar(db: DB, k: Kyc, resultado: ResultadoKyc) {
     : ev.checks.find((x) => x.id === "cedula")?.estado === "fail" ? "La persona verificada no es el representante legal registrado en Disglobal."
       : fallo ? `${fallo.label}: ${fallo.detalle}` : null;
   await db.update(schema.kyc).set({ estado: ev.estado, resultado, checks: ev.checks, motivo, decididoPor: "Motor", decidido: new Date() }).where(eq(schema.kyc.id, k.id));
+  if (ev.estado === "en_revision") enSegundoPlano(db, (d) => analizarKyc(d, k.id));
   const [c] = await db.select({ n: schema.comercios.nombreComercial }).from(schema.comercios).where(eq(schema.comercios.id, k.comercioId));
   await registrar(db, "Motor", `KYC ${{ aprobado: "aprobado", rechazado: "rechazado", en_revision: "a revisión", pendiente: "pendiente" }[ev.estado]}`,
     `${c?.n ?? k.comercioId}: ${resultado.nombre ?? "sin nombre"} C.I. ${resultado.documento ?? "?"} vs. representante ${k.representante.nombre} C.I. ${k.representante.cedula}${motivo ? ` · ${motivo}` : ""}`, k.comercioId);
@@ -169,11 +176,33 @@ export async function webhookDidit(db: DB, crudo: string, firma: string | null, 
 
 export const zSimulado = z.object({ escenario: z.enum(["representante", "otra_persona", "dudoso"]) });
 
-/** Solo demo: resultado como lo devolvería Didit para cada escenario. */
+/** Solo demo, desde el POS: resultado como lo devolvería Didit para cada escenario. */
 export async function completarSimulado(db: DB, c: Comercio, escenario: z.infer<typeof zSimulado>["escenario"]) {
   if (!kycSimulado()) throw prohibido();
   const k = await ultimo(db, c.id);
   if (!k || k.estado !== "pendiente" || k.proveedor !== "simulado") throw invalido("No hay una verificación en curso.");
+  await simular(db, k, escenario);
+}
+
+export const zSimuladoTelefono = zSimulado.extend({ t: z.string().min(10).max(64) });
+
+/** Solo demo, desde el teléfono que escaneó el QR (sin sesión del POS: autoriza el token del intento). */
+export async function completarSimuladoTelefono(db: DB, x: z.infer<typeof zSimuladoTelefono>) {
+  if (!kycSimulado()) throw prohibido();
+  const [k] = await db.select().from(schema.kyc).where(eq(schema.kyc.sesionProveedor, `sim_${x.t}`));
+  if (!k || k.estado !== "pendiente") throw invalido("Este código ya se usó o venció. Genera uno nuevo en el punto de venta.");
+  await simular(db, k, x.escenario);
+}
+
+/** Para la página del teléfono: a quién hay que verificar. */
+export async function intentoPorToken(db: DB, t: string) {
+  if (!kycSimulado()) throw prohibido();
+  const [k] = await db.select().from(schema.kyc).where(eq(schema.kyc.sesionProveedor, `sim_${t}`));
+  if (!k) throw noEncontrado("Código no válido.");
+  return { estado: k.estado, representante: { nombre: k.representante.nombre, cedula: enmascararCedula(k.representante.cedula) } };
+}
+
+async function simular(db: DB, k: Kyc, escenario: z.infer<typeof zSimulado>["escenario"]) {
   const rep = k.representante;
   const vence = isoDay(new Date(Date.now() + 3 * 365 * 86_400_000));
   const r: Record<typeof escenario, ResultadoKyc> = {

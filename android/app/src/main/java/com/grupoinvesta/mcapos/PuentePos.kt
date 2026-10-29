@@ -2,6 +2,7 @@ package com.grupoinvesta.mcapos
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.webkit.JavascriptInterface
@@ -19,6 +20,10 @@ class PuentePos(private val ctx: Context) {
 
     @JavascriptInterface
     fun modelo(): String = Build.MODEL ?: ""
+
+    /** Sin cámara (algunos modelos), la app ofrece solo el KYC con el teléfono por QR. */
+    @JavascriptInterface
+    fun tieneCamara(): Boolean = ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
 
     private val serialTerminal: String by lazy { leerSerial() }
 

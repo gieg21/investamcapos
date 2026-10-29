@@ -69,3 +69,25 @@ test("abono diario en Bs a la tasa del día, sin pasarse del saldo", () => {
   assert.equal(ultimo.montoBs, 1800);
   assert.equal(ultimo.saldoUsd, 0);
 });
+
+test("comportamiento de pago: bueno sube el cupo, lento lo baja, moroso lo corta", async () => {
+  const { comportamientoPago } = await import("./scoring");
+  const fechas = (desde: string, n: number, cada = 1) => Array.from({ length: n }, (_, i) => iso(new Date(Date.parse(desde) + (i * cada + 1) * 86_400_000)));
+  const a = { id: "a", desembolsadoEn: "2026-07-01", venceEn: "2026-08-30", plazoDias: 60, totalUsd: 1160 };
+  // Pagó en 50 días con abono diario: bueno.
+  const bueno = comportamientoPago({ ...a, saldoUsd: 0 }, fechas("2026-07-01", 50), HOY, cfg);
+  assert.equal(bueno.clase, "bueno");
+  assert.equal(bueno.multiplicador, cfg.comportamiento.multiplicadorBueno);
+  // En curso: a 40 días del desembolso lleva 30% pagado, abonando día por medio: lento.
+  const lento = comportamientoPago({ ...a, saldoUsd: 812 }, fechas("2026-07-01", 20, 2), "2026-08-10", cfg);
+  assert.equal(lento.clase, "lento");
+  // Pagó 40 días después del vencimiento: moroso → sin oferta.
+  const moroso = comportamientoPago({ ...a, saldoUsd: 0 }, [...fechas("2026-07-01", 60), "2026-10-09"], HOY, cfg);
+  assert.equal(moroso.clase, "moroso");
+  const m = metricas(dias(400, () => 800 * 100), tasasPlanas, HOY, "2023-01-01", cfg);
+  assert.equal(evaluar(m, cfg, "activo", moroso).montoMaxUsd, 0);
+  // El ajuste multiplica la base por ventas (antes de los topes).
+  const mm = metricas(dias(200, () => 60 * 100), tasasPlanas, HOY, "2025-06-01", cfg);
+  assert.ok(evaluar(mm, cfg, "activo", bueno).montoMaxUsd > evaluar(mm, cfg).montoMaxUsd);
+  assert.ok(evaluar(mm, cfg, "activo", lento).montoMaxUsd < evaluar(mm, cfg).montoMaxUsd);
+});

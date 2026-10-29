@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Dialogo } from "@/components/Dialogo";
 import { Button, Card, inputCls, PageTitle, Pill, Row, Tabs, Td, Th } from "@/components/ui";
-import { ESTADO_ADELANTO, useEstado, type AdelantoAdmin } from "@/lib/admin-store";
+import { DECISION_TONE, ESTADO_ADELANTO, RecomendacionIA, useEstado, type AdelantoAdmin } from "@/lib/admin-store";
 import { bs, fecha, isoDay, usd } from "@/lib/format";
 
 type Filtro = "pendientes" | "cobrando" | "cerrados" | "todos";
@@ -20,6 +20,7 @@ export default function Adelantos() {
   const [fechaPago, setFechaPago] = useState(isoDay(new Date()));
   const [cierre, setCierre] = useState("");
   const p = e.usuario.permisos;
+  const recDe = (id: string) => e.ia.recomendaciones.find((r) => r.tipo === "solicitud" && r.objetivoId === id);
 
   const grupos: Record<Filtro, AdelantoAdmin[]> = {
     pendientes: e.adelantos.filter((a) => ["en_revision", "aprobado"].includes(a.estado)),
@@ -59,7 +60,9 @@ export default function Adelantos() {
                     {["desembolsado", "vencido"].includes(a.estado) && p.moverDinero && <Button variant="secondary" className="!px-3 !py-1.5 text-xs" onClick={() => abrir("pago", a)}>Pago manual</Button>}
                   </div>
                 </Td>
-                <Td><Pill tone={ESTADO_ADELANTO[a.estado].tone}>{ESTADO_ADELANTO[a.estado].t}</Pill></Td>
+                <Td><Pill tone={ESTADO_ADELANTO[a.estado].tone}>{ESTADO_ADELANTO[a.estado].t}</Pill>
+                  {(() => { const r = recDe(a.id); return r && a.estado === "en_revision" ? <p className="mt-1"><Pill tone={DECISION_TONE[r.decision]}>IA: {r.decision} {Math.round(r.confianza * 100)}%</Pill></p> : null; })()}
+                </Td>
                 <Td right>{a.score ?? "—"}</Td>
                 <Td right>{usd(a.montoUsd)}</Td>
                 <Td right>{a.plazoDias} d</Td>
@@ -76,11 +79,13 @@ export default function Adelantos() {
       {dlg?.tipo === "aprobar" && (
         <Dialogo titulo={`Aprobar adelanto de ${dlg.a.comercio}`} okTxt="Aprobar" onClose={() => setDlg(null)} onOk={() => accion("aprobar", { id: dlg.a.id })}>
           <Row k="Monto" v={usd(dlg.a.montoUsd)} /><Row k="Plazo" v={`${dlg.a.plazoDias} días`} /><Row k="Total a cobrar" v={usd(dlg.a.totalUsd)} /><Row k="Retención diaria" v={`${(dlg.a.retencionPct * 100).toLocaleString("es-VE")}%`} /><Row k="Score" v={dlg.a.score ?? "—"} />
+          <RecomendacionIA r={recDe(dlg.a.id)} />
           <p className="text-neutral-500">Pasa a Operaciones para el desembolso.</p>
         </Dialogo>
       )}
       {dlg?.tipo === "rechazar" && (
         <Dialogo titulo={`Rechazar adelanto de ${dlg.a.comercio}`} okTxt="Rechazar" okVariant="danger" okDisabled={motivo.trim().length < 5} onClose={() => setDlg(null)} onOk={() => accion("rechazar", { id: dlg.a.id, motivo })}>
+          <RecomendacionIA r={recDe(dlg.a.id)} />
           <p className="text-neutral-500">El comercio verá el motivo en su POS.</p>
           <textarea className={inputCls} rows={3} value={motivo} onChange={(x) => setMotivo(x.target.value)} placeholder="Motivo" />
         </Dialogo>

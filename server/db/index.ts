@@ -43,6 +43,9 @@ async function conectar(): Promise<DB> {
   // Las ventas de los días que el servidor estuvo apagado se cobran al arrancar.
   const { cierreDiario } = await import("../mca");
   await cierreDiario(db, "Sistema");
+  // Los agentes de IA (análisis, cobranza, seguimiento, resumen) corren en segundo plano para no demorar el arranque.
+  const { correrAgentes, enSegundoPlano } = await import("../agentes");
+  enSegundoPlano(db, correrAgentes);
   return db;
 }
 

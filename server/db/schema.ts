@@ -39,6 +39,27 @@ export const comercios = pgTable("comercios", {
   creado: timestamp("creado", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Todo RIF consultado desde un POS (aunque no termine el registro): la primera etapa del embudo. */
+export const prospectos = pgTable("prospectos", {
+  rif: text("rif").primaryKey(),
+  nombre: text("nombre").notNull(),
+  actividad: text("actividad").notNull(),
+  ciudad: text("ciudad").notNull(),
+  estado: text("estado").notNull(), // estado de Venezuela (geografía)
+  serial: text("serial"),
+  consultas: integer("consultas").notNull().default(1),
+  primera: timestamp("primera", { withTimezone: true }).notNull().defaultNow(),
+  ultima: timestamp("ultima", { withTimezone: true }).notNull().defaultNow(),
+  comercioId: text("comercio_id"), // cuando confirma los datos
+});
+
+/** Uso de la app del POS por comercio y día (cada llamada con sesión cuenta como una interacción). */
+export const usos = pgTable("usos", {
+  comercioId: text("comercio_id").notNull(),
+  fecha: date("fecha").notNull(),
+  interacciones: integer("interacciones").notNull().default(1),
+}, (t) => ({ pk: uniqueIndex("uso_dia").on(t.comercioId, t.fecha) }));
+
 /** Terminales Disglobal vinculadas a un comercio de Investa. */
 export const terminales = pgTable("terminales", {
   serial: text("serial").primaryKey(),
@@ -151,4 +172,47 @@ export const bitacora = pgTable("bitacora", {
   accion: text("accion").notNull(),
   detalle: text("detalle").notNull(),
   comercioId: text("comercio_id"),
+});
+
+/** Lo que propone cada agente de IA (Claude, Jev) sobre una solicitud o un KYC; la decisión final queda en el backoffice salvo que se active la aplicación automática. */
+export const recomendaciones = pgTable("recomendaciones", {
+  id: serial("id").primaryKey(),
+  tipo: text("tipo", { enum: ["solicitud", "kyc"] }).notNull(),
+  objetivoId: text("objetivo_id").notNull(), // id del adelanto o del KYC
+  comercioId: text("comercio_id").notNull(),
+  decision: text("decision", { enum: ["aprobar", "rechazar", "revisar"] }).notNull(),
+  confianza: doublePrecision("confianza").notNull(), // 0–1
+  resumen: text("resumen").notNull(),
+  detalle: jsonb("detalle").$type<{ claude?: unknown; jev?: unknown; riesgos?: string[]; mitigantes?: string[] }>().notNull(),
+  motores: jsonb("motores").$type<{ claude: "api" | "simulado" | "error"; jev: "api" | "simulado" | "error" }>().notNull(),
+  aplicada: boolean("aplicada").notNull().default(false),
+  creado: timestamp("creado", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ porObjetivo: index("rec_objetivo").on(t.tipo, t.objetivoId) }));
+
+/** Avisos al comercio en la app del POS: cobro voluntario (día sin ventas) y seguimiento del registro. */
+export const notificaciones = pgTable("notificaciones", {
+  id: text("id").primaryKey(),
+  comercioId: text("comercio_id").notNull(),
+  adelantoId: text("adelanto_id"),
+  tipo: text("tipo", { enum: ["cobro_voluntario", "seguimiento"] }).notNull(),
+  clave: text("clave").notNull(), // evita duplicados: p. ej. cobro:<adelanto>:<fecha>
+  titulo: text("titulo").notNull(),
+  mensaje: text("mensaje").notNull(),
+  montoUsd: doublePrecision("monto_usd"),
+  montoBs: doublePrecision("monto_bs"),
+  estado: text("estado", { enum: ["pendiente", "leida", "reportada", "conciliada", "descartada"] }).notNull().default("pendiente"),
+  reporte: jsonb("reporte").$type<{ referencia: string; montoBs: number; fecha: string }>(),
+  redactadoPor: text("redactado_por").notNull(), // "Claude" o "Plantilla"
+  creado: timestamp("creado", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ unica: uniqueIndex("notif_clave").on(t.clave), porComercio: index("notif_comercio").on(t.comercioId) }));
+
+/** Resumen diario de cartera escrito por el agente. */
+export const informes = pgTable("informes", {
+  id: serial("id").primaryKey(),
+  fecha: date("fecha").notNull().unique(),
+  texto: text("texto").notNull(),
+  datos: jsonb("datos").$type<Record<string, unknown>>().notNull(),
+  motor: text("motor").notNull(), // "Claude" o "Plantilla"
+  hex: text("hex"), // resultado de disparar el proyecto de Hex
+  creado: timestamp("creado", { withTimezone: true }).notNull().defaultNow(),
 });

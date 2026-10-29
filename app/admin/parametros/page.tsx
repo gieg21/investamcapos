@@ -138,7 +138,7 @@ export default function Parametros() {
         </Seccion>
 
         <Seccion titulo="Scoring con la data transaccional de Disglobal" sub="Cortes que impiden ofrecer y pesos del score (0–100)">
-          <Num label="Meses analizados" suf="meses" value={c.scoring.ventanaMeses} onChange={(n) => set((x) => { x.scoring.ventanaMeses = n; })} disabled={!editable} />
+          <Num label="Meses de ingresos analizados" hint="Los más recientes (3 por defecto); la tendencia los compara con los anteriores" suf="meses" value={c.scoring.ventanaMeses} onChange={(n) => set((x) => { x.scoring.ventanaMeses = n; })} disabled={!editable} />
           <Num label="Historia mínima" suf="meses" value={c.scoring.historialMinMeses} onChange={(n) => set((x) => { x.scoring.historialMinMeses = n; })} disabled={!editable} />
           <Num label="Ventas mensuales mínimas" suf="USD" value={c.scoring.ventasMinUsd} onChange={(n) => set((x) => { x.scoring.ventasMinUsd = n; })} disabled={!editable} />
           <Num label="Ventas para 100 pts de volumen" suf="USD" value={c.scoring.volumenRefUsd} onChange={(n) => set((x) => { x.scoring.volumenRefUsd = n; })} disabled={!editable} />
@@ -157,6 +157,36 @@ export default function Parametros() {
           <Num label="Aprobación automática hasta" suf="USD" value={c.aprobacion.automaticaHastaUsd} onChange={(n) => set((x) => { x.aprobacion.automaticaHastaUsd = n; })} disabled={!editable} hint="0 = todo pasa por Riesgo" />
           <Num label="…con score de al menos" suf="pts" value={c.aprobacion.scoreAutoMin} onChange={(n) => set((x) => { x.aprobacion.scoreAutoMin = n; })} disabled={!editable} />
           <Num label="Vigencia de la oferta" suf="días" value={c.aprobacion.vigenciaOfertaDias} onChange={(n) => set((x) => { x.aprobacion.vigenciaOfertaDias = n; })} disabled={!editable} />
+        </Seccion>
+
+        <Seccion titulo="Comportamiento de pago del último adelanto" sub="Sube o baja el cupo según cómo pagó la última línea tomada. Frecuencia = días con abono / días transcurridos. Ritmo = % pagado / % del plazo transcurrido (1 = al día).">
+          <Num label="Frecuencia de buen pagador" pct value={c.comportamiento.frecuenciaBuena} onChange={(n) => set((x) => { x.comportamiento.frecuenciaBuena = n; })} disabled={!editable} />
+          <Num label="Ritmo de buen pagador" suf="×" value={c.comportamiento.ritmoBueno} onChange={(n) => set((x) => { x.comportamiento.ritmoBueno = n; })} disabled={!editable} hint="Sin atraso sobre el plazo" />
+          <Num label="Aumento de cupo (buen pagador)" suf="×" value={c.comportamiento.multiplicadorBueno} onChange={(n) => set((x) => { x.comportamiento.multiplicadorBueno = n; })} disabled={!editable} hint="Ej.: 1,25 = +25%" />
+          <Num label="Frecuencia mínima" pct value={c.comportamiento.frecuenciaMin} onChange={(n) => set((x) => { x.comportamiento.frecuenciaMin = n; })} disabled={!editable} hint="Por debajo: pago lento" />
+          <Num label="Ritmo mínimo" suf="×" value={c.comportamiento.ritmoMin} onChange={(n) => set((x) => { x.comportamiento.ritmoMin = n; })} disabled={!editable} hint="Por debajo: pago lento" />
+          <Num label="Reducción de cupo (pago lento)" suf="×" value={c.comportamiento.multiplicadorLento} onChange={(n) => set((x) => { x.comportamiento.multiplicadorLento = n; })} disabled={!editable} hint="Ej.: 0,6 = −40%" />
+          <Num label="Atraso máximo sobre el plazo" suf="días" value={c.comportamiento.diasAtrasoMax} onChange={(n) => set((x) => { x.comportamiento.diasAtrasoMax = n; })} disabled={!editable} hint="Más atraso: sin oferta" />
+        </Seccion>
+
+        <Seccion titulo="Agentes de IA (Claude + Jev)" sub="Por defecto solo recomiendan. Un rechazo nunca se aplica solo.">
+          <Field label="Aprobación automática" hint="Aprueban solicitudes y KYC cuando Claude y Jev coinciden en aprobar">
+            <select className={inputCls} disabled={!editable} value={c.ia.aplicarAutomatico ? "si" : "no"} onChange={(x) => set((y) => { y.ia.aplicarAutomatico = x.target.value === "si"; })}>
+              <option value="no">No: solo recomiendan</option><option value="si">Sí, dentro de los límites</option>
+            </select>
+          </Field>
+          <Num label="Confianza mínima de ambos" pct value={c.ia.confianzaMin} onChange={(n) => set((x) => { x.ia.confianzaMin = n; })} disabled={!editable} />
+          <Num label="Monto máximo que aprueba el agente" suf="USD" value={c.ia.montoAutoMaxUsd} onChange={(n) => set((x) => { x.ia.montoAutoMaxUsd = n; })} disabled={!editable} />
+        </Seccion>
+
+        <Seccion titulo="Cobranza y seguimiento" sub="Disglobal retiene la cuota antes de liquidar las ventas. Si un día no hay ventas por el POS, el agente avisa al comercio para que abone por su voluntad.">
+          <Field label="Aviso de cobro voluntario">
+            <select className={inputCls} disabled={!editable} value={c.cobranza.avisarSinVentas ? "si" : "no"} onChange={(x) => set((y) => { y.cobranza.avisarSinVentas = x.target.value === "si"; })}>
+              <option value="si">Activo</option><option value="no">Desactivado</option>
+            </select>
+          </Field>
+          <Num label="Días sin ventas antes del aviso" suf="días" value={c.cobranza.diasSinVentasAviso} onChange={(n) => set((x) => { x.cobranza.diasSinVentasAviso = n; })} disabled={!editable} />
+          <Num label="Días estancado en el registro" suf="días" value={c.cobranza.seguimientoDiasEstancado} onChange={(n) => set((x) => { x.cobranza.seguimientoDiasEstancado = n; })} disabled={!editable} hint="Antes del aviso de seguimiento" />
         </Seccion>
 
         <Seccion titulo="KYC del representante legal" sub="La cédula verificada debe ser la del representante que Disglobal tiene para el RIF">

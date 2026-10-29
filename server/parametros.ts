@@ -23,6 +23,9 @@ const zConfig = z.object({
     pesos: z.object({ volumen: n, estabilidad: n, tendencia: n, actividad: n, antiguedad: n, rechazos: n }),
   }),
   aprobacion: z.object({ automaticaHastaUsd: n, scoreAutoMin: n, vigenciaOfertaDias: n }),
+  comportamiento: z.object({ frecuenciaBuena: n, ritmoBueno: n, multiplicadorBueno: n, frecuenciaMin: n, ritmoMin: n, multiplicadorLento: n, diasAtrasoMax: n }),
+  ia: z.object({ aplicarAutomatico: z.boolean(), confianzaMin: n, montoAutoMaxUsd: n }),
+  cobranza: z.object({ avisarSinVentas: z.boolean(), diasSinVentasAviso: n, seguimientoDiasEstancado: n }),
   kyc: z.object({ coincidenciaRostroMin: n, intentosMax: n }),
 }) satisfies z.ZodType<Config>;
 

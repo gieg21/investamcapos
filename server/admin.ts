@@ -6,6 +6,7 @@ import type { Admin } from "./auth";
 import { schema, type DB } from "./db";
 import { disglobalSimulado } from "./disglobal";
 import { DEMO, noEncontrado } from "./http";
+import { estadoMotores } from "./agentes";
 import { kycDeComercio } from "./kyc";
 import { ventasMensuales } from "./mca";
 import { paramsVigente, tasaDelDia } from "./repo";
@@ -55,6 +56,12 @@ export async function estadoAdmin(db: DB, u: Admin) {
     adelantos: adelantos.map((a) => ({ ...a, comercio: nombre.get(a.comercioId) ?? "", score: scoreDe.get(a.evaluacionId) ?? null, ultimoPago: ultimoPago.get(a.id) ?? null })),
     parametros: { vigente: await paramsVigente(db), versiones: await versiones(db) },
     bitacora: await db.select().from(schema.bitacora).orderBy(desc(schema.bitacora.id)).limit(300),
+    ia: {
+      motores: estadoMotores(),
+      recomendaciones: (await db.select().from(schema.recomendaciones).orderBy(desc(schema.recomendaciones.id)).limit(100)).map((r) => ({ ...r, comercio: nombre.get(r.comercioId) ?? "" })),
+      avisos: (await db.select().from(schema.notificaciones).orderBy(desc(schema.notificaciones.creado)).limit(100)).map((n) => ({ ...n, comercio: nombre.get(n.comercioId) ?? "" })),
+      informe: (await db.select().from(schema.informes).orderBy(desc(schema.informes.fecha)).limit(1))[0] ?? null,
+    },
   };
 }
 
@@ -67,5 +74,7 @@ export async function detalleComercio(db: DB, id: string) {
   const terminales = await db.select().from(schema.terminales).where(eq(schema.terminales.comercioId, id));
   let ventas: Awaited<ReturnType<typeof ventasMensuales>> = [];
   try { ventas = await ventasMensuales(db, c); } catch { /* Disglobal no disponible: el detalle se muestra sin el gráfico */ }
-  return { comercio: c, kyc: await kycDeComercio(db, id), evaluaciones, adelantos: adelantos.map((a) => ({ ...a, pagos: pagos.filter((p) => p.adelantoId === a.id) })), terminales, ventas };
+  const recomendaciones = await db.select().from(schema.recomendaciones).where(eq(schema.recomendaciones.comercioId, id)).orderBy(desc(schema.recomendaciones.id)).limit(20);
+  const avisos = await db.select().from(schema.notificaciones).where(eq(schema.notificaciones.comercioId, id)).orderBy(desc(schema.notificaciones.creado)).limit(20);
+  return { comercio: c, kyc: await kycDeComercio(db, id), recomendaciones, avisos, evaluaciones, adelantos: adelantos.map((a) => ({ ...a, pagos: pagos.filter((p) => p.adelantoId === a.id) })), terminales, ventas };
 }

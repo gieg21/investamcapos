@@ -34,7 +34,7 @@ export type Config = {
     diasGracia: number; // días después del plazo antes de marcar el adelanto como vencido
   };
   scoring: {
-    ventanaMeses: number; // meses de historia transaccional que se analizan
+    ventanaMeses: number; // meses de ingresos que se analizan (los más recientes); la tendencia compara con los meses anteriores
     historialMinMeses: number; // corte: menos historia → sin oferta
     ventasMinUsd: number; // corte: ventas mensuales promedio mínimas
     diasActivosMinPct: number; // corte: % mínimo de días con ventas
@@ -47,6 +47,31 @@ export type Config = {
     automaticaHastaUsd: number; // solicitudes hasta este monto se aprueban solas…
     scoreAutoMin: number; // …si además el score es al menos este
     vigenciaOfertaDias: number; // la evaluación vale estos días; después se recalcula
+  };
+  /**
+   * Comportamiento de pago del último adelanto desembolsado: sube o baja el cupo.
+   * frecuencia = días con abono / días transcurridos; ritmo = % pagado / % del plazo transcurrido (1 = al día).
+   */
+  comportamiento: {
+    frecuenciaBuena: number; // con esta frecuencia…
+    ritmoBueno: number; // …y este ritmo, sin atraso: buen pagador
+    multiplicadorBueno: number; // el cupo sube
+    frecuenciaMin: number; // por debajo de esta frecuencia…
+    ritmoMin: number; // …o de este ritmo: pago lento
+    multiplicadorLento: number; // el cupo baja
+    diasAtrasoMax: number; // más días de atraso sobre el plazo: sin oferta
+  };
+  /** Agentes de IA (Claude + Jev). Por defecto solo recomiendan; un rechazo nunca se aplica solo. */
+  ia: {
+    aplicarAutomatico: boolean; // aprobar solicitudes y KYC cuando Claude y Jev coinciden en aprobar
+    confianzaMin: number; // 0–1: confianza mínima de ambos para aplicar
+    montoAutoMaxUsd: number; // tope de monto para que el agente apruebe solo
+  };
+  /** Cobro voluntario: si un día no hay ventas por el POS, Disglobal no retiene nada; se avisa al comercio. */
+  cobranza: {
+    avisarSinVentas: boolean;
+    diasSinVentasAviso: number; // días seguidos sin ventas antes de avisar
+    seguimientoDiasEstancado: number; // días en la misma etapa del registro antes del aviso de seguimiento
   };
   kyc: {
     coincidenciaRostroMin: number; // % mínimo selfie vs. foto de la cédula para aprobar sin revisión
@@ -75,7 +100,7 @@ export const CONFIG_DEFAULT: Config = {
     diasGracia: 15,
   },
   scoring: {
-    ventanaMeses: 6,
+    ventanaMeses: 3,
     historialMinMeses: 3,
     ventasMinUsd: 600,
     diasActivosMinPct: 0.5,
@@ -88,6 +113,25 @@ export const CONFIG_DEFAULT: Config = {
     automaticaHastaUsd: 1000,
     scoreAutoMin: 80,
     vigenciaOfertaDias: 7,
+  },
+  comportamiento: {
+    frecuenciaBuena: 0.8,
+    ritmoBueno: 1,
+    multiplicadorBueno: 1.25,
+    frecuenciaMin: 0.5,
+    ritmoMin: 0.8,
+    multiplicadorLento: 0.6,
+    diasAtrasoMax: 15,
+  },
+  ia: {
+    aplicarAutomatico: false,
+    confianzaMin: 0.85,
+    montoAutoMaxUsd: 1500,
+  },
+  cobranza: {
+    avisarSinVentas: true,
+    diasSinVentasAviso: 1,
+    seguimientoDiasEstancado: 3,
   },
   kyc: {
     coincidenciaRostroMin: 70,
@@ -124,6 +168,16 @@ export function validar(c: Config): string[] {
   if (Object.values(s.pesos).some((w) => w < 0)) e.push("Ningún peso puede ser negativo.");
   if (!(a.automaticaHastaUsd >= 0)) e.push("El tope de aprobación automática no puede ser negativo.");
   if (!(a.vigenciaOfertaDias >= 1)) e.push("La oferta debe tener al menos 1 día de vigencia.");
+  const b = c.comportamiento;
+  if (!(b.frecuenciaMin >= 0 && b.frecuenciaMin <= b.frecuenciaBuena && b.frecuenciaBuena <= 1)) e.push("Frecuencias de pago: 0 ≤ mínima ≤ buena ≤ 100%.");
+  if (!(b.ritmoMin > 0 && b.ritmoMin <= b.ritmoBueno && b.ritmoBueno <= 3)) e.push("Ritmos de pago: 0 < mínimo ≤ bueno ≤ 3.");
+  if (!(b.multiplicadorBueno >= 1 && b.multiplicadorBueno <= 3)) e.push("El multiplicador de buen pagador va de 1 a 3.");
+  if (!(b.multiplicadorLento > 0 && b.multiplicadorLento <= 1)) e.push("El multiplicador de pago lento va de 0 a 1.");
+  if (!(b.diasAtrasoMax >= 0)) e.push("Los días de atraso máximos no pueden ser negativos.");
+  if (!(c.ia.confianzaMin >= 0.5 && c.ia.confianzaMin <= 1)) e.push("La confianza mínima de los agentes va de 50% a 100%.");
+  if (!(c.ia.montoAutoMaxUsd >= 0)) e.push("El tope de aprobación del agente no puede ser negativo.");
+  if (!(Number.isInteger(c.cobranza.diasSinVentasAviso) && c.cobranza.diasSinVentasAviso >= 1)) e.push("Los días sin ventas antes del aviso son un entero ≥ 1.");
+  if (!(c.cobranza.seguimientoDiasEstancado >= 1)) e.push("Los días de estancamiento son al menos 1.");
   if (!(c.kyc.coincidenciaRostroMin >= 0 && c.kyc.coincidenciaRostroMin <= 100)) e.push("La coincidencia de rostro va de 0 a 100%.");
   if (!(Number.isInteger(c.kyc.intentosMax) && c.kyc.intentosMax >= 1)) e.push("Los intentos de KYC son un entero ≥ 1.");
   return e;

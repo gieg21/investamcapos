@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Dialogo } from "@/components/Dialogo";
 import { Aviso, Button, Card, CardHead, inputCls, Pill, Row, Td, Th } from "@/components/ui";
-import { ESTADO_ADELANTO, ESTADO_KYC, useEstado } from "@/lib/admin-store";
+import { ESTADO_ADELANTO, ESTADO_KYC, RecomendacionIA, useEstado } from "@/lib/admin-store";
 import { api } from "@/lib/api";
 import { bs, fecha, pct, usd } from "@/lib/format";
 import { PESO_LABEL, type Peso } from "@/lib/params";
@@ -78,6 +78,7 @@ export default function Comercio({ params }: { params: { id: string } }) {
                 ))}
               </ul>
             ) : <p className="text-sm text-neutral-500">{k ? "Esperando el resultado del proveedor." : "Sin intentos."}</p>}
+            {k && <div className="mt-3"><RecomendacionIA r={e.ia.recomendaciones.find((r) => r.tipo === "kyc" && r.objetivoId === k.id)} /></div>}
             {e.usuario.permisos.decidir && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {k?.estado === "en_revision" && !kycDeOtro && <>
@@ -112,17 +113,23 @@ export default function Comercio({ params }: { params: { id: string } }) {
                 </div>
               </div>
               <div className="divide-y divide-black/5">
-                <Row k="Ventas mensuales promedio" v={usd(ev.detalle.metricas.ventasMensualesUsd)} />
+                <Row k={`Ventas mensuales (últimos ${ev.detalle.metricas.meses.length} meses)`} v={usd(ev.detalle.metricas.ventasMensualesUsd)} />
                 <Row k="Ventas diarias promedio" v={usd(ev.detalle.metricas.ventasDiariasUsd)} />
                 <Row k="Meses con ventas" v={ev.detalle.metricas.mesesHistorial} />
                 <Row k="Variación mes a mes (CV)" v={pct(ev.detalle.metricas.cv)} />
-                <Row k="Tendencia (últ. 3 m vs. previos)" v={`${ev.detalle.metricas.tendencia >= 1 ? "+" : ""}${pct(ev.detalle.metricas.tendencia - 1)}`} />
+                <Row k="Tendencia vs. meses anteriores" v={`${ev.detalle.metricas.tendencia >= 1 ? "+" : ""}${pct(ev.detalle.metricas.tendencia - 1)}`} />
                 <Row k="Días con ventas" v={pct(ev.detalle.metricas.diasActivosPct, 0)} />
                 <Row k="Transacciones rechazadas" v={pct(ev.detalle.metricas.rechazoPct)} />
                 <Row k="Ticket promedio" v={usd(ev.detalle.metricas.ticketPromedioUsd)} />
                 <Row k="Antigüedad con Disglobal" v={`${ev.detalle.metricas.antiguedadMeses} meses`} />
+                {ev.detalle.comportamiento && (
+                  <div className="py-2 text-sm">
+                    <p className="flex justify-between"><span>Pago del último adelanto</span><Pill tone={{ bueno: "green", regular: "neutral", lento: "amber", moroso: "red" }[ev.detalle.comportamiento.clase] as "green"}>{ev.detalle.comportamiento.clase} · ×{ev.detalle.comportamiento.multiplicador}</Pill></p>
+                    <p className="mt-1 text-xs text-neutral-500">Abonos {ev.detalle.comportamiento.diasConAbono} de {ev.detalle.comportamiento.diasTranscurridos} días ({pct(ev.detalle.comportamiento.frecuencia, 0)}) · ritmo {ev.detalle.comportamiento.ritmo.toFixed(2)} · {ev.detalle.comportamiento.diasAtraso ? `${ev.detalle.comportamiento.diasAtraso} días de atraso` : "sin atraso"}{ev.detalle.comportamiento.pagado ? " · pagado" : " · en curso"}</p>
+                  </div>
+                )}
                 <div className="pt-2 text-xs text-neutral-500">
-                  Tope por ventas {usd(ev.detalle.calculo.base)} ({pct(cfg.oferta.pctVentasMensuales, 0)} × multiplicador {ev.detalle.calculo.multiplicador}) · capacidad de pago {usd(ev.detalle.calculo.capacidad)} · límite {usd(cfg.oferta.montoMax)}
+                  Tope por ventas {usd(ev.detalle.calculo.base)} ({pct(cfg.oferta.pctVentasMensuales, 0)} × multiplicador {ev.detalle.calculo.multiplicador}{ev.detalle.calculo.ajustePago != null && ev.detalle.calculo.ajustePago !== 1 ? ` × pago ${ev.detalle.calculo.ajustePago}` : ""}) · capacidad de pago {usd(ev.detalle.calculo.capacidad)} · límite {usd(cfg.oferta.montoMax)}
                 </div>
               </div>
             </div>

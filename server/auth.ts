@@ -1,8 +1,9 @@
 import "server-only";
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { isoDay } from "@/lib/format";
 import { puede, ROL_LABEL, type Permiso, type Rol } from "@/lib/permisos";
 import { getDb, schema, type DB } from "./db";
 import { ApiError, noAutorizado, prohibido } from "./http";
@@ -85,6 +86,9 @@ export async function requierePos() {
   if (!c) throw noAutorizado();
   if (c.estado === "bloqueado") throw prohibido("Tu comercio está bloqueado para adelantos. Comunícate con Investa.");
   if (s.serial) await db.update(schema.terminales).set({ ultimoUso: new Date() }).where(eq(schema.terminales.serial, s.serial));
+  // Frecuencia de uso para el seguimiento del backoffice.
+  await db.insert(schema.usos).values({ comercioId: c.id, fecha: isoDay(new Date()) })
+    .onConflictDoUpdate({ target: [schema.usos.comercioId, schema.usos.fecha], set: { interacciones: sql`${schema.usos.interacciones} + 1` } });
   return { comercio: c, serial: s.serial };
 }
 

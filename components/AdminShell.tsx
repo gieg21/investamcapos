@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Coins, Gauge, History, LogOut, Menu, SlidersHorizontal, Store, TrendingUp, X } from "lucide-react";
+import { Bot, Coins, Filter, Gauge, History, LogOut, Menu, SlidersHorizontal, Store, TrendingUp, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -13,6 +13,8 @@ const NAV = [
   { href: "/admin", label: "Panel", icon: Gauge },
   { href: "/admin/adelantos", label: "Adelantos", icon: Coins, badge: "a" as const },
   { href: "/admin/comercios", label: "Comercios", icon: Store, badge: "k" as const },
+  { href: "/admin/seguimiento", label: "Seguimiento", icon: Filter },
+  { href: "/admin/agentes", label: "Agentes IA", icon: Bot, badge: "i" as const },
   { href: "/admin/tasas-bcv", label: "Tasas BCV", icon: TrendingUp },
   { href: "/admin/parametros", label: "Parámetros", icon: SlidersHorizontal, badge: "p" as const },
   { href: "/admin/bitacora", label: "Bitácora", icon: History },
@@ -30,7 +32,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (!ready || !e) return <div className="min-h-screen bg-sand" />;
 
   const pend = e.parametros.versiones.find((v) => v.estado === "pendiente");
-  const badges = { a: e.kpis.porAprobar + e.kpis.porDesembolsar, k: e.kpis.kycPorRevisar, p: pend && pend.propuestoPorId !== e.usuario.id && e.usuario.permisos.parametros ? 1 : 0 };
+  const badges = { a: e.kpis.porAprobar + e.kpis.porDesembolsar, k: e.kpis.kycPorRevisar, i: e.ia.avisos.filter((x) => x.estado === "reportada").length, p: pend && pend.propuestoPorId !== e.usuario.id && e.usuario.permisos.parametros ? 1 : 0 };
 
   return (
     <div className="min-h-screen lg:pl-64">

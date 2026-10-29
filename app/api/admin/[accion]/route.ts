@@ -3,7 +3,8 @@ import { estadoAdmin } from "@/server/admin";
 import { exigir, requiereAdmin } from "@/server/auth";
 import { getDb } from "@/server/db";
 import { cuerpo, enSerie, noEncontrado, ok, ruta } from "@/server/http";
-import { aprobar, bloquear, cierreDiario, desembolsarAdmin, pagoManual, rechazar, reevaluar, zPagoManual } from "@/server/mca";
+import { correrAgentes } from "@/server/agentes";
+import { aprobar, bloquear, cierreDiario, conciliarAviso, desembolsarAdmin, pagoManual, rechazar, reevaluar, zPagoManual } from "@/server/mca";
 import { habilitarIntento, revisarKyc, zRevision } from "@/server/kyc";
 import { aprobarPropuesta, proponer, rechazarPropuesta, zPropuesta } from "@/server/parametros";
 import { historialTasas, importarTasas, registrarTasa, zTasa } from "@/server/tasas";
@@ -25,6 +26,8 @@ export const POST = ruta(async (req: Request, { params }: { params: { accion: st
       case "desembolsar": { const x = await cuerpo(req, zId.extend({ referencia: z.string() })); return desembolsarAdmin(db, u, x.id, x.referencia); }
       case "pago-manual": return pagoManual(db, u, await cuerpo(req, zPagoManual));
       case "cierre": exigir(u, "mover_dinero"); resultado = await cierreDiario(db, u.nombre); return;
+      case "agentes": exigir(u, "decidir"); resultado = await correrAgentes(db); return;
+      case "aviso-conciliar": { exigir(u, "mover_dinero"); const x = await cuerpo(req, zId.extend({ confirmar: z.boolean() })); return conciliarAviso(db, u, x.id, x.confirmar); }
       case "reevaluar": return reevaluar(db, u, (await cuerpo(req, zId)).id);
       case "bloquear": { const x = await cuerpo(req, zMotivo.extend({ bloqueado: z.boolean() })); return bloquear(db, u, x.id, x.bloqueado, x.motivo); }
       case "kyc-revisar": return revisarKyc(db, u, await cuerpo(req, zRevision));

@@ -1,16 +1,18 @@
 import "server-only";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { addDays, isoDay } from "@/lib/format";
 import { abonoDelDia, cotizar, r2 } from "@/lib/mca";
 import { parseRif, rifValido } from "@/lib/rif";
-import { evaluar, metricas, tasaEn } from "@/lib/scoring";
+import { comportamientoPago, evaluar, metricas, tasaEn } from "@/lib/scoring";
 import { crearSesion, exigir, nuevoId, type Admin } from "./auth";
 import { schema, type DB } from "./db";
 import { disglobal } from "./disglobal";
 import { conflicto, DEMO, invalido, noEncontrado, prohibido } from "./http";
 import { params, paramsVigente, registrar, tasaDelDia, tasas } from "./repo";
+import { analizarSolicitud, enSegundoPlano } from "./agentes";
 import { estadoKyc, kycAprobado } from "./kyc";
+import { CUENTA_COBRO } from "@/lib/config";
 import { asegurarTasaDeHoy, BCV_REFERENCIA } from "./tasas";
 
 type Comercio = typeof schema.comercios.$inferSelect;
@@ -25,7 +27,7 @@ const tasaFn = (ts: { fecha: string; tasa: number }[]) => (f: string) => tasaEn(
 export const zConsulta = z.object({ rif: z.string().min(5).max(20), serial: z.string().max(40).optional() });
 
 /** Busca la ficha en Disglobal y comprueba que la terminal desde la que se pide pertenece a ese RIF. */
-export async function consultarRif(db: DB, x: z.infer<typeof zConsulta>) {
+export async function consultarRif(db: DB, x: z.infer<typeof zConsulta>, contarConsulta = true) {
   const p = parseRif(x.rif);
   if (!p || !rifValido(p.canon)) throw invalido("Ese RIF no es válido. Revisa la letra, los 8 números y el dígito final.");
   const ficha = await disglobal.comercio(p.canon);
@@ -34,6 +36,9 @@ export async function consultarRif(db: DB, x: z.infer<typeof zConsulta>) {
   // Sin esta comprobación, cualquiera que conozca un RIF vería la ficha del comercio.
   if (!terminal && !DEMO) throw prohibido("Este punto de venta no está registrado a nombre de ese RIF en Disglobal.");
   const [existente] = await db.select({ id: schema.comercios.id, telefono: schema.comercios.telefono, email: schema.comercios.email }).from(schema.comercios).where(eq(schema.comercios.rif, p.canon));
+  // Primera etapa del embudo: quedó registrado que este comercio se interesó, aunque no confirme.
+  if (contarConsulta) await db.insert(schema.prospectos).values({ rif: ficha.rif, nombre: ficha.nombreComercial, actividad: ficha.actividad, ciudad: ficha.ciudad, estado: ficha.estado, serial: x.serial, comercioId: existente?.id })
+    .onConflictDoUpdate({ target: schema.prospectos.rif, set: { consultas: sql`${schema.prospectos.consultas} + 1`, ultima: new Date(), serial: x.serial } });
   return {
     ficha: { ...ficha, cuentaLiquidacion: { ...ficha.cuentaLiquidacion, numero: enmascarar(ficha.cuentaLiquidacion.numero) } },
     terminalVerificada: !!terminal,
@@ -52,7 +57,7 @@ export const zConfirmar = zConsulta.extend({
 
 /** El cliente confirmó los datos: se crea (o actualiza) el comercio, se vincula la terminal, se abre la sesión del POS y se corre el scoring. */
 export async function confirmarOnboarding(db: DB, x: z.infer<typeof zConfirmar>) {
-  const { ficha, terminalVerificada } = await consultarRif(db, x);
+  const { ficha, terminalVerificada } = await consultarRif(db, x, false);
   const real = (await disglobal.comercio(ficha.rif))!; // la ficha sin enmascarar, nunca la que manda el cliente
   const correcciones: Record<string, string> = {};
   if (x.telefono !== real.telefono) correcciones.telefono = `${real.telefono} → ${x.telefono}`;
@@ -67,6 +72,7 @@ export async function confirmarOnboarding(db: DB, x: z.infer<typeof zConfirmar>)
 
   const serial = x.serial || "SIN-SERIAL";
   const modelo = real.terminales.find((t) => t.serial === serial)?.modelo ?? "desconocido";
+  await db.update(schema.prospectos).set({ comercioId: id }).where(eq(schema.prospectos.rif, real.rif));
   await db.insert(schema.terminales).values({ serial, comercioId: id, modelo, verificada: terminalVerificada })
     .onConflictDoUpdate({ target: schema.terminales.serial, set: { comercioId: id, modelo, verificada: terminalVerificada, ultimoUso: new Date() } });
 
@@ -89,13 +95,27 @@ export async function evaluarComercio(db: DB, c: Comercio, actor: string) {
   const dias = await disglobal.ventas(c.rif, desde, fin, tasaFn(ts));
   const ficha = (await disglobal.comercio(c.rif)) ?? c.disglobal;
   const m = metricas(dias, ts, hoy(), ficha.afiliadoDesde, cfg);
-  const ev = evaluar(m, cfg, ficha.estatus);
+  // Comportamiento de pago de la última línea tomada (el adelanto desembolsado más reciente).
+  const [previo] = await db.select().from(schema.adelantos)
+    .where(and(eq(schema.adelantos.comercioId, c.id), inArray(schema.adelantos.estado, ["desembolsado", "vencido", "pagado"])))
+    .orderBy(desc(schema.adelantos.desembolsadoEn)).limit(1);
+  const comp = previo?.desembolsadoEn && previo.venceEn
+    ? comportamientoPago({ ...previo, desembolsadoEn: previo.desembolsadoEn, venceEn: previo.venceEn },
+      (await db.select({ f: schema.pagos.fecha }).from(schema.pagos).where(eq(schema.pagos.adelantoId, previo.id))).map((p) => p.f), hoy(), cfg)
+    : null;
+  const ev = evaluar(m, cfg, ficha.estatus, comp);
   const [row] = await db.insert(schema.evaluaciones).values({
     comercioId: c.id, paramsVersion: version, score: ev.score, montoMaxUsd: ev.montoMaxUsd, detalle: ev,
     vence: isoDay(addDays(new Date(), cfg.aprobacion.vigenciaOfertaDias)),
   }).returning();
-  await registrar(db, actor, "Scoring", `Score ${ev.score} · ${ev.montoMaxUsd ? `oferta hasta USD ${ev.montoMaxUsd}` : `sin oferta: ${ev.cortes[0]}`} (parámetros v${version})`, c.id);
+  const pago = comp ? ` · último adelanto: pago ${comp.clase} (frecuencia ${Math.round(comp.frecuencia * 100)}%, ritmo ${comp.ritmo.toFixed(2)}, ×${comp.multiplicador})` : "";
+  await registrar(db, actor, "Scoring", `Score ${ev.score} · ${ev.montoMaxUsd ? `oferta hasta USD ${ev.montoMaxUsd}` : `sin oferta: ${ev.cortes[0]}`}${pago} (parámetros v${version})`, c.id);
   return row;
+}
+
+/** Al terminar de pagar un adelanto, su comportamiento cambia el cupo: la próxima consulta recalcula. */
+async function vencerEvaluacion(db: DB, comercioId: string) {
+  await db.update(schema.evaluaciones).set({ vence: "2000-01-01" }).where(eq(schema.evaluaciones.comercioId, comercioId));
 }
 
 /** La evaluación vigente del comercio; si venció o cambiaron los parámetros, se recalcula. */
@@ -120,12 +140,17 @@ export async function estadoPos(db: DB, c: Comercio) {
     comercio: { rif: c.rif, nombre: c.nombreComercial, razonSocial: c.razonSocial, telefono: c.telefono, email: c.email, banco: c.disglobal.cuentaLiquidacion.banco, cuenta: enmascarar(c.disglobal.cuentaLiquidacion.numero) },
     tasaHoy: t?.tasa ?? null,
     kyc: await estadoKyc(db, c),
+    avisos: await db.select({ id: schema.notificaciones.id, tipo: schema.notificaciones.tipo, titulo: schema.notificaciones.titulo, mensaje: schema.notificaciones.mensaje, montoUsd: schema.notificaciones.montoUsd, montoBs: schema.notificaciones.montoBs, estado: schema.notificaciones.estado, creado: schema.notificaciones.creado })
+      .from(schema.notificaciones).where(and(eq(schema.notificaciones.comercioId, c.id), inArray(schema.notificaciones.estado, ["pendiente", "leida", "reportada"])))
+      .orderBy(desc(schema.notificaciones.creado)).limit(5),
+    cuentaCobro: CUENTA_COBRO,
     oferta: {
       montoMaxUsd: ev.montoMaxUsd,
       score: ev.score,
       cortes: ev.detalle.cortes,
       vence: ev.vence,
       ventasDiariasUsd: r2(ev.detalle.metricas.ventasDiariasUsd),
+      pago: ev.detalle.comportamiento?.clase ?? null,
       ventasMensualesUsd: r2(ev.detalle.metricas.ventasMensualesUsd),
       precio: cfg.precio,
       montoMinUsd: cfg.oferta.montoMin,
@@ -159,6 +184,8 @@ export async function solicitar(db: DB, c: Comercio, serial: string | null, x: z
     montoUsd: q.montoUsd, plazoDias: q.plazoDias, cargoUsd: q.cargoUsd, comisionUsd: q.comisionUsd, totalUsd: q.totalUsd,
     retencionPct: q.retencionPct, saldoUsd: q.totalUsd, aprobadoPor: auto ? "Motor automático" : null, serial,
   });
+  // A revisión: el agente de IA la analiza en segundo plano y deja su recomendación a Riesgo.
+  if (!auto) enSegundoPlano(db, (d) => analizarSolicitud(d, id));
   await registrar(db, c.nombreComercial, "Solicitud de adelanto", `USD ${q.montoUsd} a ${q.plazoDias} días · total USD ${q.totalUsd} · retención ${(q.retencionPct * 100).toFixed(1)}%${auto ? " · aprobada automáticamente" : " · a revisión de Riesgo"}`, c.id);
 }
 
@@ -223,6 +250,7 @@ export async function pagoManual(db: DB, u: Admin, x: z.infer<typeof zPagoManual
   if (ya) throw conflicto("Ya hay un pago manual registrado ese día para este adelanto.");
   await db.insert(schema.pagos).values({ adelantoId: a.id, fecha: x.fecha, ventasBs: 0, montoBs: ab.montoBs, tasaBcv: tasa, montoUsd: ab.montoUsd, saldoUsd: ab.saldoUsd, origen: "manual", registradoPor: `${u.nombre} · ref. ${x.referencia}` });
   await db.update(schema.adelantos).set({ saldoUsd: ab.saldoUsd, estado: ab.saldoUsd <= 0 ? "pagado" : a.estado }).where(eq(schema.adelantos.id, a.id));
+  if (ab.saldoUsd <= 0) await vencerEvaluacion(db, a.comercioId);
   await registrar(db, u.nombre, "Pago manual", `${await nombreDe(db, a.comercioId)}: Bs ${ab.montoBs.toLocaleString("es-VE")} a ${tasa} = USD ${ab.montoUsd} · saldo USD ${ab.saldoUsd}${x.montoBs > ab.montoBs ? ` (excedente de Bs ${r2(x.montoBs - ab.montoBs)} no aplicado)` : ""}`, a.comercioId);
 }
 
@@ -256,6 +284,7 @@ export async function cierreDiario(db: DB, actor: string) {
     if (saldo <= 0) { estado = "pagado"; cerrados++; }
     else if (a.venceEn && isoDay(addDays(new Date(a.venceEn + "T12:00:00"), diasGracia)) < hoy()) { if (estado !== "vencido") vencidos++; estado = "vencido"; }
     await db.update(schema.adelantos).set({ saldoUsd: saldo, estado, ultimoCierre: ayer > (a.ultimoCierre ?? "") ? ayer : a.ultimoCierre }).where(eq(schema.adelantos.id, a.id));
+    if (estado === "pagado" && a.estado !== "pagado") await vencerEvaluacion(db, a.comercioId);
     if (estado === "pagado" && a.estado !== "pagado") await registrar(db, actor, "Adelanto pagado", `${await nombreDe(db, a.comercioId)} terminó de pagar USD ${a.totalUsd}`, a.comercioId);
     if (estado === "vencido" && a.estado !== "vencido") await registrar(db, actor, "Adelanto vencido", `${await nombreDe(db, a.comercioId)}: saldo USD ${saldo} pasado el plazo y los días de gracia`, a.comercioId);
   }
@@ -293,3 +322,37 @@ export async function ventasMensuales(db: DB, c: Comercio) {
   return [...porMes.entries()].map(([mes, x]) => ({ mes, usd: r2(x.usd), bs: r2(x.bs), tx: x.tx }));
 }
 
+
+/* ---------- Avisos en el POS ---------- */
+
+export const zReporte = z.object({ id: z.string(), referencia: z.string().min(4).max(40), montoBs: z.number().positive(), fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+
+async function avisoDe(db: DB, c: Comercio, id: string) {
+  const [n] = await db.select().from(schema.notificaciones).where(and(eq(schema.notificaciones.id, id), eq(schema.notificaciones.comercioId, c.id)));
+  if (!n) throw noEncontrado("Aviso no encontrado.");
+  return n;
+}
+
+/** El comercio pagó por su cuenta (Pago Móvil o transferencia) y lo reporta; Operaciones lo concilia. */
+export async function reportarPago(db: DB, c: Comercio, x: z.infer<typeof zReporte>) {
+  const n = await avisoDe(db, c, x.id);
+  if (n.tipo !== "cobro_voluntario" || !["pendiente", "leida"].includes(n.estado)) throw conflicto("Este aviso ya no admite reportes.");
+  if (x.fecha > hoy()) throw invalido("La fecha del pago no puede ser futura.");
+  await db.update(schema.notificaciones).set({ estado: "reportada", reporte: { referencia: x.referencia.trim(), montoBs: x.montoBs, fecha: x.fecha } }).where(eq(schema.notificaciones.id, n.id));
+  await registrar(db, c.nombreComercial, "Pago voluntario reportado", `Bs ${x.montoBs.toLocaleString("es-VE")} · ref. ${x.referencia} · ${x.fecha}`, c.id);
+}
+
+export async function marcarLeido(db: DB, c: Comercio, id: string) {
+  const n = await avisoDe(db, c, id);
+  if (n.estado === "pendiente") await db.update(schema.notificaciones).set({ estado: n.tipo === "seguimiento" ? "descartada" : "leida" }).where(eq(schema.notificaciones.id, n.id));
+}
+
+/** Operaciones confirma el pago reportado en el banco y lo abona a la tasa BCV de la fecha del pago. */
+export async function conciliarAviso(db: DB, u: Admin, id: string, confirmar: boolean) {
+  exigir(u, "mover_dinero");
+  const [n] = await db.select().from(schema.notificaciones).where(eq(schema.notificaciones.id, id));
+  if (!n || n.estado !== "reportada" || !n.reporte || !n.adelantoId) throw conflicto("Solo se concilian pagos reportados.");
+  if (confirmar) await pagoManual(db, u, { id: n.adelantoId, montoBs: n.reporte.montoBs, fecha: n.reporte.fecha, referencia: n.reporte.referencia });
+  await db.update(schema.notificaciones).set({ estado: confirmar ? "conciliada" : "descartada" }).where(eq(schema.notificaciones.id, n.id));
+  if (!confirmar) await registrar(db, u.nombre, "Pago reportado descartado", `Ref. ${n.reporte.referencia}: no apareció en el banco`, n.comercioId);
+}

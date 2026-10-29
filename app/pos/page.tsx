@@ -1,7 +1,8 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowLeft, CheckCircle2, Clock, Loader2, LogOut, Pencil, ShieldCheck, Store } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Loader2, LogOut, Pencil, ShieldCheck, Smartphone, Store } from "lucide-react";
+import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiFallo } from "@/lib/api";
 import { bs, fecha, usd } from "@/lib/format";
@@ -17,7 +18,7 @@ import type { estadoPos, consultarRif } from "@/server/mca";
 
 type Estado = Awaited<ReturnType<typeof estadoPos>>;
 type Consulta = Awaited<ReturnType<typeof consultarRif>>;
-declare global { interface Window { InvestaPOS?: { serial(): string; modelo(): string } } }
+declare global { interface Window { InvestaPOS?: { serial(): string; modelo(): string; tieneCamara?(): boolean } } }
 
 function serialTerminal() {
   if (typeof window === "undefined") return "";
@@ -71,7 +72,52 @@ export default function Pos() {
           <p className="text-xs text-white/60">{estado.comercio.rif}</p>
         </div>
       )}
+      {estado && <Avisos e={estado} onListo={setEstado} />}
       <main className="flex flex-1 flex-col px-5 py-6">{cuerpo}</main>
+    </div>
+  );
+}
+
+/* ---------- Avisos de los agentes (cobro voluntario y seguimiento) ---------- */
+
+function Avisos({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const [ref, setRef] = useState("");
+  const [monto, setMonto] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!e.avisos.length) return null;
+  const run = async (fn: () => Promise<void>) => { setErr(""); setBusy(true); try { await fn(); } catch (x) { setErr((x as Error).message); } finally { setBusy(false); } };
+  const hoy = new Date().toISOString().slice(0, 10);
+  return (
+    <div className="space-y-3 px-5 pt-5">
+      {e.avisos.map((a) => (
+        <section key={a.id} className={clsx("rounded-2xl p-4 shadow-card", a.tipo === "cobro_voluntario" ? "bg-amber-50 ring-1 ring-amber-200" : "bg-white")}>
+          <p className="font-semibold">{a.titulo}</p>
+          <p className="mt-1 text-sm text-neutral-700">{a.mensaje}</p>
+          {a.tipo === "cobro_voluntario" && a.estado === "reportada" && <p className="mt-2 text-sm font-medium text-emerald-700">Recibimos tu reporte. Lo confirmamos en el banco y se abona a tu deuda.</p>}
+          {a.tipo === "cobro_voluntario" && a.estado !== "reportada" && (abierto === a.id ? (
+            <div className="mt-3 space-y-2">
+              <div className="rounded-xl bg-white p-3 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400">Pago Móvil</p>
+                <p>{e.cuentaCobro.banco} ({e.cuentaCobro.codigoBanco}) · {e.cuentaCobro.pagoMovil}</p>
+                <p className="text-neutral-500">{e.cuentaCobro.titular} · {e.cuentaCobro.rif}</p>
+              </div>
+              <input value={monto} onChange={(x) => setMonto(x.target.value)} inputMode="decimal" placeholder="Monto pagado en Bs" className="h-12 w-full rounded-xl border border-black/10 px-3" />
+              <input value={ref} onChange={(x) => setRef(x.target.value)} inputMode="numeric" placeholder="Número de referencia" className="h-12 w-full rounded-xl border border-black/10 px-3" />
+              <Fallo msg={err} />
+              <Boton cargando={busy} disabled={ref.trim().length < 4 || !(Number(monto.replace(/\./g, "").replace(",", ".")) > 0)}
+                onClick={() => run(async () => { onListo(await api<Estado>("/pos/aviso-reportar", { id: a.id, referencia: ref, montoBs: Number(monto.replace(/\./g, "").replace(",", ".")), fecha: hoy })); setAbierto(null); })}>Reportar pago</Boton>
+            </div>
+          ) : (
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => { setAbierto(a.id); setRef(""); setMonto(a.montoBs ? String(a.montoBs).replace(".", ",") : ""); }} className="flex-1 rounded-xl bg-ink py-2.5 text-sm font-semibold text-white">Ya pagué</button>
+              {a.estado === "pendiente" && <button onClick={() => run(async () => onListo(await api<Estado>("/pos/aviso-leido", { id: a.id })))} className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold ring-1 ring-black/10">Más tarde</button>}
+            </div>
+          ))}
+          {a.tipo === "seguimiento" && <button onClick={() => run(async () => onListo(await api<Estado>("/pos/aviso-leido", { id: a.id })))} className="mt-3 text-sm font-semibold text-brand">Entendido</button>}
+        </section>
+      ))}
     </div>
   );
 }
@@ -236,15 +282,39 @@ function Confirmar({ c, rif, serial, onVolver, onListo }: { c: Consulta; rif: st
 
 /* ---------- 3. KYC del representante legal ---------- */
 
+/** El POS tiene cámara: el puente Android lo sabe; en el navegador se preguntan los dispositivos. */
+async function hayCamara() {
+  try { if (window.InvestaPOS?.tieneCamara) return window.InvestaPOS.tieneCamara(); } catch { /* puente viejo */ }
+  try { return (await navigator.mediaDevices?.enumerateDevices())?.some((d) => d.kind === "videoinput") ?? false; } catch { return false; }
+}
+
+function CodigoQr({ url }: { url: string }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => { QRCode.toDataURL(url, { width: 480, margin: 1, color: { dark: "#121212", light: "#FFFFFF" } }).then(setSrc).catch(() => setSrc("")); }, [url]);
+  return src ? <img src={src} alt="Código QR para verificar tu identidad con el teléfono" className="mx-auto aspect-square w-full max-w-[16rem] rounded-2xl bg-white p-3 shadow-card" /> : <div className="mx-auto aspect-square w-full max-w-[16rem] animate-pulse rounded-2xl bg-white" />;
+}
+
 function Kyc({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
   const k = e.kyc;
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [camara, setCamara] = useState<boolean | null>(null);
+  const [modo, setModo] = useState<"equipo" | "telefono" | null>(null);
+  useEffect(() => { hayCamara().then(setCamara); }, []);
+
+  // Con el QR en pantalla, el POS consulta cada pocos segundos si el teléfono ya terminó.
+  useEffect(() => {
+    if (modo !== "telefono" || k.estado !== "pendiente") return;
+    const t = setInterval(() => { api<Estado>("/pos/kyc-consultar", {}).then(onListo).catch(() => {}); }, 5000);
+    return () => clearInterval(t);
+  }, [modo, k.estado, onListo]);
+
   const run = async (fn: () => Promise<void>) => { setErr(""); setBusy(true); try { await fn(); } catch (x) { setErr((x as Error).message); } finally { setBusy(false); } };
-  const iniciar = () => run(async () => {
-    const r = await api<{ url: string | null; estado: Estado }>("/pos/kyc-iniciar", {});
-    if (r.url) location.href = r.url; // flujo de Didit: cédula, selfie y prueba de vida
-    else onListo(r.estado);
+  const iniciar = (m: "equipo" | "telefono") => run(async () => {
+    const r = k.estado === "pendiente" && k.url ? { url: k.url, estado: e } : await api<{ url: string | null; estado: Estado }>("/pos/kyc-iniciar", {});
+    setModo(m);
+    onListo(r.estado);
+    if (m === "equipo" && r.url && !r.estado.kyc.simulado) location.href = r.url; // flujo de Didit en este POS
   });
   const simular = (escenario: string) => run(async () => onListo(await api<Estado>("/pos/kyc-simular", { escenario })));
 
@@ -264,7 +334,22 @@ function Kyc({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
     </div>
   );
 
-  if (k.estado === "pendiente" && k.simulado) return (
+  if (k.estado === "pendiente" && modo === "telefono" && k.url) return (
+    <div className="flex flex-1 flex-col gap-4">
+      <div>
+        <h1 className="font-display text-2xl">Escanea con tu teléfono</h1>
+        <p className="mt-1 text-sm text-neutral-500">Abre la cámara del teléfono del representante legal y apunta al código. La verificación se hace allá; esta pantalla se actualiza sola.</p>
+      </div>
+      <CodigoQr url={k.url} />
+      <p className="flex items-center justify-center gap-2 text-sm text-neutral-500"><Loader2 className="h-4 w-4 animate-spin text-brand" /> Esperando la verificación…</p>
+      {quien}
+      {k.simulado && <p className="break-all text-center text-[11px] text-neutral-400">Demo: el teléfono debe poder abrir {k.url}</p>}
+      <Fallo msg={err} />
+      {camara && <button onClick={() => setModo("equipo")} className="text-sm font-semibold text-brand">Prefiero hacerlo en este equipo</button>}
+    </div>
+  );
+
+  if (k.estado === "pendiente" && modo === "equipo" && k.simulado) return (
     <div className="flex flex-1 flex-col gap-4">
       <h1 className="font-display text-2xl">Verificación de identidad</h1>
       <div className="flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-3xl bg-ink text-white/70">
@@ -280,6 +365,7 @@ function Kyc({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
         </div>
       </div>
       <Fallo msg={err} />
+      <button onClick={() => setModo("telefono")} className="text-sm font-semibold text-brand">Mejor con mi teléfono (QR)</button>
     </div>
   );
 
@@ -314,11 +400,12 @@ function Kyc({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
       )}
       <Fallo msg={err} />
       {!sinIntentos && (
-        <div className="mt-auto">
-          <Boton onClick={k.estado === "pendiente" && k.url ? () => { location.href = k.url!; } : iniciar} cargando={busy}>
-            {k.estado === "pendiente" ? "Continuar verificación" : k.estado === "rechazado" ? "Intentar de nuevo" : "Comenzar verificación"}
-          </Boton>
-          <p className="mt-3 text-center text-xs text-neutral-400">La verificación la hace Didit; Investa recibe el resultado y los datos de la cédula.</p>
+        <div className="mt-auto space-y-3">
+          <Boton onClick={() => iniciar("telefono")} cargando={busy && modo !== "equipo"}><Smartphone className="h-5 w-5" /> Con mi teléfono (código QR)</Boton>
+          {camara ? (
+            <Boton onClick={() => iniciar("equipo")} cargando={busy && modo === "equipo"} className="!bg-white !text-ink ring-1 ring-black/10">En este punto de venta</Boton>
+          ) : camara === false && <p className="text-center text-xs text-neutral-500">Este punto de venta no tiene cámara: usa tu teléfono.</p>}
+          <p className="text-center text-xs text-neutral-400">Recomendado el teléfono: su cámara lee mejor la cédula. La verificación la hace Didit; Investa recibe el resultado y los datos de la cédula.</p>
         </div>
       )}
     </div>
@@ -365,7 +452,9 @@ function Oferta({ e, onListo }: { e: Estado; onListo: (e: Estado) => void }) {
       <div className="rounded-3xl bg-brand p-5 text-white shadow-card">
         <p className="text-sm text-white/80">Tienes disponible hasta</p>
         <p className="font-display text-4xl">{usd(o.montoMaxUsd)}</p>
-        <p className="mt-1 text-xs text-white/70">Oferta válida hasta el {fecha(o.vence)} · basada en tus ventas de ~{usd(o.ventasMensualesUsd)} al mes</p>
+        <p className="mt-1 text-xs text-white/70">Oferta válida hasta el {fecha(o.vence)} · basada en tus ventas de los últimos meses (~{usd(o.ventasMensualesUsd)} al mes)</p>
+        {o.pago === "bueno" && <p className="mt-2 rounded-xl bg-white/15 px-3 py-2 text-xs">Tu cupo subió por pagar a tiempo tu último adelanto.</p>}
+        {o.pago === "lento" && <p className="mt-2 rounded-xl bg-white/15 px-3 py-2 text-xs">Tu cupo es menor porque tu último adelanto se pagó más lento de lo previsto.</p>}
       </div>
 
       <Tarjeta titulo="¿Cuánto necesitas?">

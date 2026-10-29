@@ -19,6 +19,12 @@ export default function Panel() {
         <Kpi label="Desembolsado histórico" value={usd(k.desembolsadoUsd)} tone="violet" sub={`Cobrado ${usd(k.cobradoUsd)}`} />
         <Kpi label="Comercios" value={k.comercios} tone="amber" sub={`${k.conOferta} con oferta vigente`} />
       </div>
+      {e.ia.informe && (
+        <Card className="mt-6">
+          <CardHead title={`Resumen del día · Agente IA`} sub={`${fecha(e.ia.informe.fecha)} · escrito por ${e.ia.informe.motor}`} action={<Link href="/admin/agentes" className="text-sm font-semibold text-brand">Agentes</Link>} />
+          <p className="whitespace-pre-line px-5 py-4 text-sm leading-relaxed">{e.ia.informe.texto}</p>
+        </Card>
+      )}
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHead title="Por decidir o desembolsar" sub={`${k.porAprobar} en revisión · ${k.porDesembolsar} aprobado(s)`} action={<Link href="/admin/adelantos" className="text-sm font-semibold text-brand">Ver todos</Link>} />

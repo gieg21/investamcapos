@@ -26,13 +26,50 @@ export type Metricas = {
   antiguedadMeses: number;
 };
 
+/** Cómo pagó (o está pagando) el último adelanto desembolsado. */
+export type Comportamiento = {
+  adelantoId: string;
+  diasTranscurridos: number;
+  diasConAbono: number;
+  frecuencia: number; // días con abono / días transcurridos
+  ritmo: number; // % pagado / % del plazo transcurrido; 1 = al día, >1 adelantado
+  diasAtraso: number; // días pagando después del vencimiento
+  pagado: boolean;
+  clase: "bueno" | "regular" | "lento" | "moroso";
+  multiplicador: number;
+};
+
+export type AdelantoPrevio = { id: string; desembolsadoEn: string; venceEn: string; plazoDias: number; totalUsd: number; saldoUsd: number };
+
+/** Frecuencia y ritmo de pago del último adelanto, y el ajuste de cupo que corresponde según los parámetros. */
+export function comportamientoPago(a: AdelantoPrevio, fechasAbono: string[], hoy: string, cfg: Config): Comportamiento {
+  const b = cfg.comportamiento;
+  const pagado = a.saldoUsd <= 0;
+  const ultimoAbono = [...fechasAbono].sort().at(-1);
+  const fin = pagado && ultimoAbono ? ultimoAbono : hoy;
+  const diasTranscurridos = Math.max(1, Math.round((dia(fin) - dia(a.desembolsadoEn)) / DIA));
+  const diasConAbono = new Set(fechasAbono).size;
+  const frecuencia = Math.min(1, diasConAbono / diasTranscurridos);
+  const avancePlazo = Math.min(1, diasTranscurridos / a.plazoDias);
+  const ritmo = pagado ? a.plazoDias / diasTranscurridos : ((a.totalUsd - a.saldoUsd) / a.totalUsd) / avancePlazo;
+  const diasAtraso = Math.max(0, Math.round((dia(fin) - dia(a.venceEn)) / DIA));
+  const clase: Comportamiento["clase"] =
+    diasAtraso > b.diasAtrasoMax ? "moroso"
+      : frecuencia >= b.frecuenciaBuena && ritmo >= b.ritmoBueno && diasAtraso === 0 ? "bueno"
+        : frecuencia < b.frecuenciaMin || ritmo < b.ritmoMin ? "lento"
+          : "regular";
+  const multiplicador = { bueno: b.multiplicadorBueno, regular: 1, lento: b.multiplicadorLento, moroso: 0 }[clase];
+  return { adelantoId: a.id, diasTranscurridos, diasConAbono, frecuencia, ritmo, diasAtraso, pagado, clase, multiplicador };
+}
+
 export type Evaluacion = {
   score: number;
   subscores: Record<Peso, number>;
   metricas: Metricas;
   cortes: string[]; // motivos que impiden ofrecer (vacío si califica)
   montoMaxUsd: number; // 0 si no hay oferta
-  calculo: { base: number; multiplicador: number; capacidad: number; tope: number };
+  comportamiento: Comportamiento | null; // null: primer adelanto
+  calculo: { base: number; multiplicador: number; ajustePago: number; capacidad: number; tope: number };
 };
 
 const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -74,9 +111,17 @@ export function metricas(dias: DiaVentas[], tasas: Tasa[], hoy: string, afiliado
   const vals = meses.map((m) => m.ventasUsd);
   const media = vals.reduce((a, b) => a + b, 0) / nMeses;
   const desv = Math.sqrt(vals.reduce((a, v) => a + (v - media) ** 2, 0) / nMeses);
-  const ult = vals.slice(-3), ant = vals.slice(0, -3);
-  const prom = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const tendencia = ant.length && prom(ant) > 0 ? prom(ult) / prom(ant) : 1;
+  // Tendencia: promedio diario de la ventana vs. el de los mismos meses anteriores (solo días con historia).
+  const inicioAnt = Math.max(inicio - nMeses * 30 * DIA, primera ? dia(primera) : inicio);
+  let usdAnt = 0;
+  for (const d of dias) {
+    const t = dia(d.fecha);
+    if (t < inicioAnt || t >= inicio) continue;
+    const tasa = tasaEn(tasas, d.fecha);
+    usdAnt += tasa ? d.ventasBs / tasa : 0;
+  }
+  const diasAnt = (inicio - inicioAnt) / DIA;
+  const tendencia = diasAnt >= 30 && usdAnt > 0 ? (usdTotal / (nMeses * 30)) / (usdAnt / diasAnt) : 1;
 
   return {
     mesesHistorial,
@@ -107,7 +152,7 @@ export function subscores(m: Metricas, cfg: Config): Record<Peso, number> {
 }
 
 /** Evalúa al comercio: score, cortes y monto máximo de adelanto (entre montoMin y montoMax, o 0 si no califica). */
-export function evaluar(m: Metricas, cfg: Config, estatusDisglobal: "activo" | "suspendido" | "retirado" = "activo"): Evaluacion {
+export function evaluar(m: Metricas, cfg: Config, estatusDisglobal: "activo" | "suspendido" | "retirado" = "activo", comp: Comportamiento | null = null): Evaluacion {
   const s = cfg.scoring, o = cfg.oferta, p = cfg.precio;
   const sub = subscores(m, cfg);
   const score = Math.round((Object.keys(sub) as Peso[]).reduce((a, k) => a + sub[k] * s.pesos[k], 0) / 100);
@@ -119,10 +164,13 @@ export function evaluar(m: Metricas, cfg: Config, estatusDisglobal: "activo" | "
   if (m.diasActivosPct < s.diasActivosMinPct) cortes.push(`Vendió ${Math.round(m.diasActivosPct * 100)}% de los días; el mínimo es ${Math.round(s.diasActivosMinPct * 100)}%.`);
   if (m.rechazoPct > s.rechazoMaxPct) cortes.push(`Rechazos de ${(m.rechazoPct * 100).toFixed(1)}%; el máximo es ${Math.round(s.rechazoMaxPct * 100)}%.`);
   if (score < s.scoreMin) cortes.push(`Score ${score}; el mínimo para recibir oferta es ${s.scoreMin}.`);
+  if (comp?.clase === "moroso") cortes.push(`El último adelanto se pagó con ${comp.diasAtraso} días de atraso sobre el plazo; el máximo es ${cfg.comportamiento.diasAtrasoMax}.`);
 
   const escalon = [...o.escalones].sort((a, b) => b.scoreMin - a.scoreMin).find((e) => score >= e.scoreMin);
   const multiplicador = escalon?.multiplicador ?? 0;
-  const base = m.ventasMensualesUsd * o.pctVentasMensuales * multiplicador;
+  // El flujo (ventas de los últimos meses) fija la base; el comportamiento de pago del último adelanto la sube o la baja.
+  const ajustePago = comp?.multiplicador ?? 1;
+  const base = m.ventasMensualesUsd * o.pctVentasMensuales * multiplicador * ajustePago;
   // Lo que puede devolver en el plazo más largo reteniendo el máximo permitido de sus ventas diarias.
   const plazoMax = Math.max(...p.plazos);
   const capacidad = (m.ventasDiariasUsd * p.retencionMaxPct * plazoMax) / factorPrecio(plazoMax, cfg);
@@ -135,6 +183,7 @@ export function evaluar(m: Metricas, cfg: Config, estatusDisglobal: "activo" | "
     metricas: m,
     cortes,
     montoMaxUsd: cortes.length ? 0 : tope,
-    calculo: { base: Math.round(base), multiplicador, capacidad: Math.round(capacidad), tope: Math.max(0, tope) },
+    comportamiento: comp,
+    calculo: { base: Math.round(base), multiplicador, ajustePago, capacidad: Math.round(capacidad), tope: Math.max(0, tope) },
   };
 }

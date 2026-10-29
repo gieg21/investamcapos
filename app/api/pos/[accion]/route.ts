@@ -3,7 +3,8 @@ import { getDb } from "@/server/db";
 import { DEMO_COMERCIOS } from "@/server/disglobal";
 import { ApiError, cuerpo, DEMO, enSerie, noEncontrado, ok, ruta } from "@/server/http";
 import { completarSimulado, consultarKyc, iniciarKyc, zSimulado } from "@/server/kyc";
-import { confirmarOnboarding, consultarRif, estadoPos, solicitar, zConfirmar, zConsulta, zSolicitud } from "@/server/mca";
+import { z } from "zod";
+import { confirmarOnboarding, consultarRif, estadoPos, marcarLeido, reportarPago, solicitar, zConfirmar, zConsulta, zReporte, zSolicitud } from "@/server/mca";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export const dynamic = "force-dynamic";
  *   POST /api/pos/kyc-consultar                         → al volver de Didit, lee la decisión si el webhook no llegó
  *   POST /api/pos/kyc-simular { escenario }             → solo demo
  *   POST /api/pos/solicitar  { montoUsd, plazoDias, acepto } (exige KYC aprobado)
+ *   POST /api/pos/aviso-reportar { id, referencia, montoBs, fecha } → pago voluntario en un día sin ventas
+ *   POST /api/pos/aviso-leido { id }
  *   POST /api/pos/salir
  */
 export const GET = ruta(async (_req: Request, { params }: { params: { accion: string } }) => {
@@ -61,6 +64,18 @@ export const POST = ruta(async (req: Request, { params }: { params: { accion: st
       const { comercio } = await requierePos();
       const x = await cuerpo(req, zSimulado);
       await enSerie(() => completarSimulado(db, comercio, x.escenario));
+      return ok(await estadoPos(db, comercio));
+    }
+    case "aviso-reportar": {
+      const { comercio } = await requierePos();
+      const x = await cuerpo(req, zReporte);
+      await enSerie(() => reportarPago(db, comercio, x));
+      return ok(await estadoPos(db, comercio));
+    }
+    case "aviso-leido": {
+      const { comercio } = await requierePos();
+      const x = await cuerpo(req, z.object({ id: z.string() }));
+      await marcarLeido(db, comercio, x.id);
       return ok(await estadoPos(db, comercio));
     }
     case "salir": await cerrarSesion("pos"); return ok();

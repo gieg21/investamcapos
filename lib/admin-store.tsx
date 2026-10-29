@@ -76,3 +76,18 @@ export const ESTADO_KYC = {
   pendiente: { t: "En curso", tone: "blue" },
   sin: { t: "Sin KYC", tone: "neutral" },
 } as const;
+
+export const DECISION_TONE = { aprobar: "green", rechazar: "red", revisar: "amber" } as const;
+
+/** Recomendación del agente de IA para una tarjeta del backoffice. */
+export function RecomendacionIA({ r }: { r: EstadoAdmin["ia"]["recomendaciones"][number] | undefined }) {
+  if (!r) return null;
+  const tono = { aprobar: "border-emerald-300 bg-emerald-50/60", rechazar: "border-coral-300 bg-coral-100/60", revisar: "border-amber-300 bg-amber-50/60" }[r.decision];
+  return (
+    <div className={`rounded-xl border border-dashed px-3 py-2 text-xs ${tono}`}>
+      <p className="font-semibold">Agente IA: {r.decision} · {Math.round(r.confianza * 100)}%{r.aplicada ? " · aplicada" : ""} <span className="font-normal text-neutral-500">(Claude {r.motores.claude}, Jev {r.motores.jev})</span></p>
+      <p className="mt-0.5 text-neutral-700">{r.resumen}</p>
+      {!!r.detalle.riesgos?.length && <p className="mt-0.5 text-coral">Riesgos: {r.detalle.riesgos.join(" · ")}</p>}
+    </div>
+  );
+}
