@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Investa Adelantos</string>
+    <string name="sin_conexion">Sin conexión. Revisa la red del punto de venta y toca para reintentar.</string>
+</resources>

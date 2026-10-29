@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+body { @apply bg-sand font-sans text-ink antialiased; }
+h1, h2, h3 { @apply font-display; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+/* Evita que el contenido largo ensanche las columnas del grid en móvil */
+.grid > * { min-width: 0; }
+
+/* Brand Guidelines: titulares en Space Grotesk Medium; números alineados en tablas y montos */
+h1, h2, h3, .font-display { font-weight: 500; letter-spacing: -0.01em; }
+.font-display { font-feature-settings: "tnum" 1; }
